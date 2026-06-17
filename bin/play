@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PLAY_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+PLAY_SOURCE=${BASH_SOURCE[0]}
+while [[ -L $PLAY_SOURCE ]]; do
+  PLAY_DIR=$(cd -P "$(dirname "$PLAY_SOURCE")" && pwd)
+  PLAY_SOURCE=$(readlink "$PLAY_SOURCE")
+  [[ $PLAY_SOURCE != /* ]] && PLAY_SOURCE=$PLAY_DIR/$PLAY_SOURCE
+done
+PLAY_ROOT=$(cd -P "$(dirname "$PLAY_SOURCE")/.." && pwd)
 # shellcheck source=../lib/config.sh
 source "$PLAY_ROOT/lib/config.sh"
 source "$PLAY_ROOT/lib/utils.sh"

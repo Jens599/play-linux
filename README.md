@@ -23,6 +23,19 @@ Optional:
 
 ## Install
 
+On Arch Linux, install dependencies with:
+
+```bash
+sudo pacman -S mpv yt-dlp socat fzf xdg-utils
+```
+
+For clipboard support, install one clipboard provider:
+
+```bash
+sudo pacman -S wl-clipboard  # Wayland
+sudo pacman -S xclip         # X11
+```
+
 ```bash
 ./setup.sh
 ```

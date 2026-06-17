@@ -21,4 +21,11 @@ Required runtime dependencies:
 
 Optional dependencies:
   socat fzf wl-clipboard xclip xsel xdg-utils
+
+Arch install command:
+  sudo pacman -S mpv yt-dlp socat fzf xdg-utils
+
+Clipboard providers:
+  sudo pacman -S wl-clipboard  # Wayland
+  sudo pacman -S xclip         # X11
 EOF

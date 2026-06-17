@@ -4,6 +4,8 @@ A fast, resource-light Linux Bash port of the `play` portion of `Start-MPVStream
 
 It plays direct URLs with `mpv`, searches YouTube with `yt-dlp`, keeps persistent config, and stores lightweight playback history.
 
+Playback logs are colorized when output is attached to a terminal. During normal playback, `play` logs the intended command, starts mpv immediately in idle IPC mode, then streams the resolved URL into the already-open player. If `socat` is missing, it falls back to direct `mpv URL` launch.
+
 ## Requirements
 
 Required:
@@ -15,6 +17,7 @@ Required:
 Optional:
 
 - `fzf` for interactive selection
+- `socat` for the fast mpv IPC launch pipeline
 - `wl-clipboard`, `xclip`, or `xsel` for clipboard support
 - `xdg-open` for `--open`
 

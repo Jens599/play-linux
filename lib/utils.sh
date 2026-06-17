@@ -4,6 +4,47 @@ play_has() {
   command -v "$1" >/dev/null 2>&1
 }
 
+play_color_enabled() {
+  [[ -z ${NO_COLOR:-} && -t 1 ]]
+}
+
+play_color() {
+  local code=$1 text=$2
+  if play_color_enabled; then
+    printf '\033[%sm%s\033[0m' "$code" "$text"
+  else
+    printf '%s' "$text"
+  fi
+}
+
+play_log() {
+  local level=$1 message=$2 prefix color
+  case "$level" in
+    ok) prefix='✓'; color=32 ;;
+    warn) prefix='!'; color=33 ;;
+    error) prefix='x'; color=31 ;;
+    step) prefix='→'; color=36 ;;
+    info|*) prefix='•'; color=34 ;;
+  esac
+  printf '%s %s\n' "$(play_color "$color" "$prefix")" "$message"
+}
+
+play_log_command() {
+  local command_text=$1
+  play_log step 'Launch command:'
+  printf '  %s\n' "$(play_color 33 "$command_text")"
+}
+
+play_json_string() {
+  local value=$1
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  value=${value//$'\n'/\\n}
+  value=${value//$'\r'/\\r}
+  value=${value//$'\t'/\\t}
+  printf '"%s"' "$value"
+}
+
 play_join_command() {
   local out= arg
   for arg in "$@"; do

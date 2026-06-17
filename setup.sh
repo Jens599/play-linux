@@ -20,5 +20,5 @@ Required runtime dependencies:
   mpv yt-dlp
 
 Optional dependencies:
-  fzf wl-clipboard xclip xsel xdg-utils
+  socat fzf wl-clipboard xclip xsel xdg-utils
 EOF

@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PLAY_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=../lib/config.sh
+source "$PLAY_ROOT/lib/config.sh"
+source "$PLAY_ROOT/lib/utils.sh"
+source "$PLAY_ROOT/lib/args.sh"
+source "$PLAY_ROOT/lib/search.sh"
+source "$PLAY_ROOT/lib/picker.sh"
+source "$PLAY_ROOT/lib/history.sh"
+source "$PLAY_ROOT/lib/clipboard.sh"
+source "$PLAY_ROOT/lib/doctor.sh"
+source "$PLAY_ROOT/lib/player.sh"
+
+play_usage() {
+  cat <<'EOF'
+usage: play [options] [url-or-query]
+
+Core:
+  play URL                         Play a direct URL
+  play -s "query"                  Search YouTube and play selection
+  play --home                      Search YouTube home feed
+  play --history | --last          Replay history
+
+Options:
+  -s, --search                     Treat input as search query
+  -p, --playlist                   Playlist search
+  -t, --type video|playlist|channel
+  --first                          Select first result without picker
+  --clipboard                      Read URL from clipboard
+  --copy-url                       Copy resolved URL instead of playing
+  --open                           Open resolved URL with xdg-open
+  --select-only                    Print selected item as TSV
+  --dry-run                        Print command without starting player
+  --pass-thru                      With --dry-run, print machine-readable fields
+  --clear-history                  Clear history
+  --config                         Open config in $EDITOR
+  --config-path                    Print config path
+  --config-export PATH             Export config
+  --config-import PATH             Import config
+  --set KEY=VALUE                  Set a config value
+  --get KEY                        Print a config value
+  --doctor                         Show dependency/config diagnostics
+
+Playback:
+  --cookies PATH                   Use and persist cookie path
+  --size pip|small|medium|max      Window size preset
+  -f, --format 480p|720p|1080p|best|audio
+  --audio-only                     Add --no-video
+  --background                     Start player in background
+  --loop                           Loop playback
+  --hwdec                          Enable hardware acceleration
+  --reverse-playlist               Reverse playlist playback
+  --no-subtitles                   Omit subtitle preference
+  --subtitle-language en,ja        Preferred subtitle language(s)
+  --mpv-arg ARG                    Append custom mpv argument
+EOF
+}
+
+SEARCH=false HOME_FEED=false PLAYLIST=false FIRST=false CLIPBOARD=false HISTORY=false LAST=false CLEAR_HISTORY=false
+DRY_RUN=false PASS_THRU=false SELECT_ONLY=false COPY_URL=false OPEN_URL=false
+TYPE= URL= COOKIE_PATH_ARG= CONFIG_EXPORT= CONFIG_IMPORT= CONFIG_SET= CONFIG_GET=
+MPV_EXTRA_ARGS=()
+
+while (($#)); do
+  case "$1" in
+    -s|--search) SEARCH=true ;;
+    --home) HOME_FEED=true ;;
+    -p|--playlist) PLAYLIST=true ;;
+    --first|-fi) FIRST=true ;;
+    -t|--type) TYPE=${2:?missing type}; shift ;;
+    --clipboard) CLIPBOARD=true ;;
+    --history) HISTORY=true ;;
+    --last) LAST=true ;;
+    --clear-history) CLEAR_HISTORY=true ;;
+    --dry-run) DRY_RUN=true ;;
+    --pass-thru) PASS_THRU=true ;;
+    --select-only) SELECT_ONLY=true ;;
+    --copy-url) COPY_URL=true ;;
+    --open) OPEN_URL=true ;;
+    --cookies|-c) COOKIE_PATH_ARG=${2:?missing cookie path}; shift ;;
+    --size|-sz) SIZE_EFFECTIVE=${2:?missing size}; shift ;;
+    -f|--format) YTDL_FORMAT_EFFECTIVE=${2:?missing format}; shift ;;
+    --audio-only|-a) AUDIO_ONLY_EFFECTIVE=true ;;
+    --background|-b) BACKGROUND_EFFECTIVE=true ;;
+    --loop|-l) LOOP_EFFECTIVE=true ;;
+    --hwdec|-h) HARDWARE_ACCEL_EFFECTIVE=true ;;
+    --reverse-playlist|-r) REVERSE_PLAYLIST_EFFECTIVE=true ;;
+    --no-subtitles) NO_SUBTITLES_EFFECTIVE=true ;;
+    --subtitle-language) SUBTITLE_LANGUAGE_EFFECTIVE=${2:?missing subtitle language}; shift ;;
+    --mpv-arg) MPV_EXTRA_ARGS+=("${2:?missing mpv argument}"); shift ;;
+    --config) play_open_config; exit ;;
+    --config-path) play_ensure_config; play_config_path; exit ;;
+    --config-export) CONFIG_EXPORT=${2:?missing export path}; shift ;;
+    --config-import) CONFIG_IMPORT=${2:?missing import path}; shift ;;
+    --set) CONFIG_SET=${2:?missing KEY=VALUE}; shift ;;
+    --get) CONFIG_GET=${2:?missing KEY}; shift ;;
+    --doctor) play_load_config; play_doctor; exit ;;
+    --help|-help) play_usage; exit ;;
+    --) shift; break ;;
+    -*) printf 'Unknown option: %s\n' "$1" >&2; play_usage >&2; exit 2 ;;
+    *) URL=${URL:+$URL }$1 ;;
+  esac
+  shift
+done
+
+play_load_config
+
+if [[ -n $CONFIG_EXPORT ]]; then play_export_config "$CONFIG_EXPORT"; exit; fi
+if [[ -n $CONFIG_IMPORT ]]; then play_import_config "$CONFIG_IMPORT"; exit; fi
+if [[ -n $CONFIG_SET ]]; then
+  [[ $CONFIG_SET == *=* ]] || { printf '--set requires KEY=VALUE\n' >&2; exit 2; }
+  play_set_config_value "${CONFIG_SET%%=*}" "${CONFIG_SET#*=}"
+  exit
+fi
+if [[ -n $CONFIG_GET ]]; then
+  eval "printf '%s\n' \"\${$CONFIG_GET:-}\""
+  exit
+fi
+
+if play_bool "$CLEAR_HISTORY"; then play_clear_history; exit; fi
+
+SIZE_EFFECTIVE=${SIZE_EFFECTIVE:-${SIZE:-pip}}
+YTDL_FORMAT_EFFECTIVE=${YTDL_FORMAT_EFFECTIVE:-${YTDL_FORMAT:-480p}}
+AUDIO_ONLY_EFFECTIVE=${AUDIO_ONLY_EFFECTIVE:-${AUDIO_ONLY:-false}}
+BACKGROUND_EFFECTIVE=${BACKGROUND_EFFECTIVE:-${BACKGROUND:-false}}
+LOOP_EFFECTIVE=${LOOP_EFFECTIVE:-${LOOP:-false}}
+HARDWARE_ACCEL_EFFECTIVE=${HARDWARE_ACCEL_EFFECTIVE:-${HARDWARE_ACCEL:-false}}
+REVERSE_PLAYLIST_EFFECTIVE=${REVERSE_PLAYLIST_EFFECTIVE:-${REVERSE_PLAYLIST:-false}}
+NO_SUBTITLES_EFFECTIVE=${NO_SUBTITLES_EFFECTIVE:-${NO_SUBTITLES:-false}}
+SUBTITLE_LANGUAGE_EFFECTIVE=${SUBTITLE_LANGUAGE_EFFECTIVE:-${SUBTITLE_LANGUAGE:-en}}
+COOKIE_PATH_EFFECTIVE=${COOKIE_PATH_ARG:-${COOKIE_PATH:-}}
+
+if [[ -n $COOKIE_PATH_ARG ]]; then
+  if [[ ! -f $COOKIE_PATH_ARG ]]; then printf 'Cookie file not found: %s\n' "$COOKIE_PATH_ARG" >&2; exit 1; fi
+  play_set_config_value COOKIE_PATH "$COOKIE_PATH_ARG"
+fi
+
+if play_bool "$CLIPBOARD"; then URL=$(play_clipboard_get); fi
+if play_bool "$LAST"; then
+  last=$(play_last_history) || { printf 'Playback history is empty.\n' >&2; exit 1; }
+  IFS=$'\t' read -r _ PLAY_HISTORY_TYPE PLAY_HISTORY_TITLE URL <<<"$last"
+fi
+if play_bool "$HISTORY"; then
+  selected=$(play_select_history) || exit 1
+  IFS=$'\t' read -r PLAY_HISTORY_TYPE PLAY_HISTORY_TITLE URL _ _ _ <<<"$selected"
+fi
+
+if [[ -z ${URL:-} && $HOME_FEED == false ]]; then
+  play_usage
+  exit
+fi
+
+if ! play_has "${PLAYER:-mpv}" && ! play_bool "$SELECT_ONLY" && ! play_bool "$COPY_URL" && ! play_bool "$OPEN_URL"; then
+  printf 'Player not found: %s\n' "${PLAYER:-mpv}" >&2
+  exit 1
+fi
+
+PLAY_HISTORY_TYPE=${PLAY_HISTORY_TYPE:-Direct}
+PLAY_HISTORY_TITLE=${PLAY_HISTORY_TITLE:-$URL}
+
+if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
+  play_has yt-dlp || { printf 'yt-dlp is required for search/home.\n' >&2; exit 1; }
+  NORMALIZED_TYPE=
+  if [[ -n $TYPE ]]; then NORMALIZED_TYPE=$(play_normalize_type "$TYPE") || { printf 'Invalid type: %s\n' "$TYPE" >&2; exit 2; }; fi
+  [[ $NORMALIZED_TYPE == Playlist ]] && PLAYLIST=true
+  tmp=$(mktemp)
+  play_search_youtube "$URL" "$HOME_FEED" "$PLAYLIST" "${MAX_RESULTS:-10}" "$COOKIE_PATH_EFFECTIVE" "$NORMALIZED_TYPE" >"$tmp"
+  if [[ ! -s $tmp ]]; then printf 'No results found.\n' >&2; rm -f "$tmp"; exit 1; fi
+  if play_bool "$FIRST"; then selected=$(sed -n '1p' "$tmp"); else selected=$(play_pick_result 'Search Results' "$tmp") || { rm -f "$tmp"; exit 1; }; fi
+  rm -f "$tmp"
+  IFS=$'\t' read -r PLAY_HISTORY_TYPE PLAY_HISTORY_TITLE PLAY_TARGET_URL _ _ _ <<<"$selected"
+else
+  if ! play_is_url "$URL"; then printf 'Invalid URL. Use http:// or https://, or add --search.\n' >&2; exit 2; fi
+  PLAY_TARGET_URL=$URL
+fi
+
+if play_bool "$SELECT_ONLY"; then printf '%s\t%s\t%s\n' "$PLAY_HISTORY_TYPE" "$PLAY_HISTORY_TITLE" "$PLAY_TARGET_URL"; exit; fi
+if play_bool "$COPY_URL"; then play_clipboard_set "$PLAY_TARGET_URL"; printf 'Copied URL: %s\n' "$PLAY_TARGET_URL"; exit; fi
+if play_bool "$OPEN_URL"; then play_has xdg-open || { printf 'xdg-open is required for --open.\n' >&2; exit 1; }; xdg-open "$PLAY_TARGET_URL"; exit; fi
+
+play_build_mpv_args
+play_apply_command_overrides
+play_launch

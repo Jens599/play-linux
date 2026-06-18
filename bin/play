@@ -172,6 +172,18 @@ if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
   if [[ -n $TYPE ]]; then NORMALIZED_TYPE=$(play_normalize_type "$TYPE") || { printf 'Invalid type: %s\n' "$TYPE" >&2; exit 2; }; fi
   [[ $NORMALIZED_TYPE == Playlist ]] && PLAYLIST=true
   tmp=$(mktemp)
+  play_section 'Search' >&2
+  if play_bool "$HOME_FEED"; then
+    play_detail 'Source' 'YouTube home feed' >&2
+  else
+    play_detail 'Query' "$URL" >&2
+  fi
+  if [[ -n $NORMALIZED_TYPE ]]; then
+    play_detail 'Type' "$NORMALIZED_TYPE" >&2
+  elif play_bool "$PLAYLIST"; then
+    play_detail 'Type' 'Playlist' >&2
+  fi
+  play_log step 'Fetching results.' >&2
   play_search_youtube "$URL" "$HOME_FEED" "$PLAYLIST" "${MAX_RESULTS:-10}" "$COOKIE_PATH_EFFECTIVE" "$NORMALIZED_TYPE" >"$tmp"
   if [[ ! -s $tmp ]]; then printf 'No results found.\n' >&2; rm -f "$tmp"; exit 1; fi
   if play_bool "$FIRST"; then selected=$(sed -n '1p' "$tmp"); else selected=$(play_pick_result 'Search Results' "$tmp") || { rm -f "$tmp"; exit 1; }; fi

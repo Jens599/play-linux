@@ -5,7 +5,12 @@ play_has() {
 }
 
 play_color_enabled() {
-  [[ -z ${NO_COLOR:-} && -t 1 ]]
+  [[ -n ${NO_COLOR:-} ]] && return 1
+  case "${PLAY_COLOR:-auto}" in
+    always) return 0 ;;
+    never|false|off|no) return 1 ;;
+    *) [[ -t 1 || -t 2 ]] ;;
+  esac
 }
 
 play_color() {
@@ -18,15 +23,28 @@ play_color() {
 }
 
 play_log() {
-  local level=$1 message=$2 prefix color
+  local level=$1 message=$2 label color
   case "$level" in
-    ok) prefix='✓'; color=32 ;;
-    warn) prefix='!'; color=33 ;;
-    error) prefix='x'; color=31 ;;
-    step) prefix='→'; color=36 ;;
-    info|*) prefix='•'; color=34 ;;
+    ok) label=' DONE '; color='1;30;42' ;;
+    warn) label=' WARN '; color='1;30;43' ;;
+    error) label=' FAIL '; color='1;37;41' ;;
+    step) label=' NEXT '; color='1;30;46' ;;
+    info|*) label=' INFO '; color='1;37;44' ;;
   esac
-  printf '%s %s\n' "$(play_color "$color" "$prefix")" "$message"
+  printf '  %s  %s\n' "$(play_color "$color" "$label")" "$message"
+}
+
+play_section() {
+  local title=$1 rule
+  printf -v rule '%*s' 48 ''
+  rule=${rule// /-}
+  printf '\n%s\n' "$(play_color '1;36' "$title")"
+  printf '%s\n' "$(play_color 90 "$rule")"
+}
+
+play_detail() {
+  local label=$1 value=$2
+  printf '  %s %s\n' "$(play_color 90 "$(printf '%-10s' "$label")")" "$value"
 }
 
 play_log_command() {

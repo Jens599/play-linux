@@ -19,6 +19,10 @@ source "$PLAY_ROOT/lib/clipboard.sh"
 source "$PLAY_ROOT/lib/doctor.sh"
 source "$PLAY_ROOT/lib/player.sh"
 
+PLAY_CLEANUP_FILES=()
+PLAY_CLEANUP_PIDS=()
+trap play_interrupt INT TERM
+
 play_usage() {
   cat <<'EOF'
 usage: play [options] [url-or-query]
@@ -40,6 +44,7 @@ Options:
   --select-only                    Print selected item as TSV
   --dry-run                        Print command without starting player
   --pass-thru                      With --dry-run, print machine-readable fields
+  --reverse                        Play direct URLs in reverse order
   --clear-history                  Clear history
   --config                         Open config in $EDITOR
   --config-path                    Print config path
@@ -66,7 +71,9 @@ EOF
 
 SEARCH=false HOME_FEED=false PLAYLIST=false FIRST=false CLIPBOARD=false HISTORY=false LAST=false CLEAR_HISTORY=false
 DRY_RUN=false PASS_THRU=false SELECT_ONLY=false COPY_URL=false OPEN_URL=false
+REVERSE_URLS=false
 TYPE= URL= COOKIE_PATH_ARG= CONFIG_EXPORT= CONFIG_IMPORT= CONFIG_SET= CONFIG_GET=
+POSITIONAL=()
 MPV_EXTRA_ARGS=()
 
 while (($#)); do
@@ -82,6 +89,7 @@ while (($#)); do
     --clear-history) CLEAR_HISTORY=true ;;
     --dry-run) DRY_RUN=true ;;
     --pass-thru) PASS_THRU=true ;;
+    --reverse) REVERSE_URLS=true ;;
     --select-only) SELECT_ONLY=true ;;
     --copy-url) COPY_URL=true ;;
     --open) OPEN_URL=true ;;
@@ -104,9 +112,9 @@ while (($#)); do
     --get) CONFIG_GET=${2:?missing KEY}; shift ;;
     --doctor) play_load_config; play_doctor; exit ;;
     --help|-help) play_usage; exit ;;
-    --) shift; break ;;
+    --) shift; POSITIONAL+=("$@"); break ;;
     -*) printf 'Unknown option: %s\n' "$1" >&2; play_usage >&2; exit 2 ;;
-    *) URL=${URL:+$URL }$1 ;;
+    *) POSITIONAL+=("$1") ;;
   esac
   shift
 done
@@ -153,6 +161,10 @@ if play_bool "$HISTORY"; then
   IFS=$'\t' read -r PLAY_HISTORY_TYPE PLAY_HISTORY_TITLE URL _ _ _ <<<"$selected"
 fi
 
+if [[ -z ${URL:-} && ${#POSITIONAL[@]} -gt 0 ]]; then
+  URL=${POSITIONAL[*]}
+fi
+
 if [[ -z ${URL:-} && $HOME_FEED == false ]]; then
   play_usage
   exit
@@ -172,6 +184,7 @@ if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
   if [[ -n $TYPE ]]; then NORMALIZED_TYPE=$(play_normalize_type "$TYPE") || { printf 'Invalid type: %s\n' "$TYPE" >&2; exit 2; }; fi
   [[ $NORMALIZED_TYPE == Playlist ]] && PLAYLIST=true
   tmp=$(mktemp)
+  play_register_cleanup_file "$tmp"
   play_section 'Search' >&2
   if play_bool "$HOME_FEED"; then
     play_detail 'Source' 'YouTube home feed' >&2
@@ -185,13 +198,27 @@ if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
   fi
   play_log step 'Fetching results.' >&2
   play_search_youtube "$URL" "$HOME_FEED" "$PLAYLIST" "${MAX_RESULTS:-10}" "$COOKIE_PATH_EFFECTIVE" "$NORMALIZED_TYPE" >"$tmp"
-  if [[ ! -s $tmp ]]; then printf 'No results found.\n' >&2; rm -f "$tmp"; exit 1; fi
-  if play_bool "$FIRST"; then selected=$(sed -n '1p' "$tmp"); else selected=$(play_pick_result 'Search Results' "$tmp") || { rm -f "$tmp"; exit 1; }; fi
+  if [[ ! -s $tmp ]]; then play_unregister_cleanup_file "$tmp"; printf 'No results found.\n' >&2; rm -f "$tmp"; exit 1; fi
+  if play_bool "$FIRST"; then selected=$(sed -n '1p' "$tmp"); else selected=$(play_pick_result 'Search Results' "$tmp") || { play_unregister_cleanup_file "$tmp"; rm -f "$tmp"; exit 1; }; fi
+  play_unregister_cleanup_file "$tmp"
   rm -f "$tmp"
   IFS=$'\t' read -r PLAY_HISTORY_TYPE PLAY_HISTORY_TITLE PLAY_TARGET_URL _ _ _ <<<"$selected"
+  PLAY_TARGET_URLS=("$PLAY_TARGET_URL")
 else
-  if ! play_is_url "$URL"; then printf 'Invalid URL. Use http:// or https://, or add --search.\n' >&2; exit 2; fi
-  PLAY_TARGET_URL=$URL
+  if ((${#POSITIONAL[@]} > 0)) && ! play_bool "$CLIPBOARD" && ! play_bool "$LAST" && ! play_bool "$HISTORY"; then
+    PLAY_TARGET_URLS=("${POSITIONAL[@]}")
+  else
+    PLAY_TARGET_URLS=("$URL")
+  fi
+  if play_bool "$REVERSE_URLS"; then
+    reversed=()
+    for ((i = ${#PLAY_TARGET_URLS[@]} - 1; i >= 0; i--)); do reversed+=("${PLAY_TARGET_URLS[i]}"); done
+    PLAY_TARGET_URLS=("${reversed[@]}")
+  fi
+  for target_url in "${PLAY_TARGET_URLS[@]}"; do
+    if ! play_is_url "$target_url"; then printf 'Invalid URL. Use http:// or https://, or add --search.\n' >&2; exit 2; fi
+  done
+  PLAY_TARGET_URL=${PLAY_TARGET_URLS[0]}
 fi
 
 if play_bool "$SELECT_ONLY"; then printf '%s\t%s\t%s\n' "$PLAY_HISTORY_TYPE" "$PLAY_HISTORY_TITLE" "$PLAY_TARGET_URL"; exit; fi

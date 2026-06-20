@@ -2,7 +2,7 @@
 
 play_launch() {
   local command_text
-  command_text=$(play_join_command "$PLAY_PLAYER" "${PLAY_MPV_ARGS[@]}" "$PLAY_TARGET_URL")
+  command_text=$(play_join_command "$PLAY_PLAYER" "${PLAY_MPV_ARGS[@]}" "${PLAY_TARGET_URLS[@]}")
 
   if play_bool "${DRY_RUN:-false}"; then
     play_log_command "$command_text"
@@ -13,21 +13,30 @@ play_launch() {
     return 0
   fi
 
-  play_add_history "$PLAY_HISTORY_TYPE" "$PLAY_HISTORY_TITLE" "$PLAY_TARGET_URL"
+  if ((${#PLAY_TARGET_URLS[@]} == 1)); then
+    play_add_history "$PLAY_HISTORY_TYPE" "$PLAY_HISTORY_TITLE" "$PLAY_TARGET_URL"
+  else
+    for target_url in "${PLAY_TARGET_URLS[@]}"; do
+      play_add_history "$PLAY_HISTORY_TYPE" "$target_url" "$target_url"
+    done
+  fi
   play_section 'Playback'
   play_detail 'Title' "$PLAY_HISTORY_TITLE"
   play_detail 'Type' "$PLAY_HISTORY_TYPE"
   play_detail 'URL' "$PLAY_TARGET_URL"
+  if ((${#PLAY_TARGET_URLS[@]} > 1)); then
+    play_detail 'Count' "${#PLAY_TARGET_URLS[@]}"
+  fi
   if play_start_mpv_ipc; then
     return 0
   fi
 
   play_log warn 'IPC startup unavailable; launching player directly.'
   if play_bool "${BACKGROUND_EFFECTIVE:-false}"; then
-    nohup "$PLAY_PLAYER" "${PLAY_MPV_ARGS[@]}" "$PLAY_TARGET_URL" >/dev/null 2>&1 &
+    nohup "$PLAY_PLAYER" "${PLAY_MPV_ARGS[@]}" "${PLAY_TARGET_URLS[@]}" >/dev/null 2>&1 &
     play_log ok 'Player started in background.'
   else
-    "$PLAY_PLAYER" "${PLAY_MPV_ARGS[@]}" "$PLAY_TARGET_URL"
+    "$PLAY_PLAYER" "${PLAY_MPV_ARGS[@]}" "${PLAY_TARGET_URLS[@]}"
   fi
 }
 
@@ -47,9 +56,9 @@ play_wait_for_socket() {
 }
 
 play_send_mpv_loadfile() {
-  local socket=$1 url_json payload
-  url_json=$(play_json_string "$PLAY_TARGET_URL")
-  payload='{"command":["loadfile",'"$url_json"',"replace"]}'
+  local socket=$1 target_url=$2 mode=$3 url_json payload
+  url_json=$(play_json_string "$target_url")
+  payload='{"command":["loadfile",'"$url_json"',"'"$mode"'"]}'
   printf '%s\n' "$payload" | socat - "UNIX-CONNECT:$socket" >/dev/null 2>&1
 }
 
@@ -65,35 +74,45 @@ play_start_mpv_ipc() {
   local startup_args=("${PLAY_MPV_ARGS[@]}" --force-window=immediate --idle=once --terminal=no "--input-ipc-server=$socket")
   play_log step 'Opening mpv window.'
 
-  if play_bool "${BACKGROUND_EFFECTIVE:-false}"; then
-    nohup "$PLAY_PLAYER" "${startup_args[@]}" >/dev/null 2>&1 &
-    process_pid=$!
-  else
-    "$PLAY_PLAYER" "${startup_args[@]}" &
-    process_pid=$!
-  fi
+  nohup "$PLAY_PLAYER" "${startup_args[@]}" >/dev/null 2>&1 &
+  process_pid=$!
+  play_register_cleanup_pid "$process_pid"
+  play_register_cleanup_file "$socket"
 
   if ! play_wait_for_socket "$socket"; then
     play_log warn 'mpv IPC socket did not become ready.'
+    play_unregister_cleanup_pid "$process_pid"
+    play_unregister_cleanup_file "$socket"
     kill "$process_pid" >/dev/null 2>&1 || true
     rm -f "$socket"
     return 1
   fi
 
   play_log step 'Loading stream.'
-  if ! play_send_mpv_loadfile "$socket"; then
+  if ! play_send_mpv_loadfile "$socket" "${PLAY_TARGET_URLS[0]}" replace; then
     play_log warn 'Failed to send URL to mpv IPC socket.'
+    play_unregister_cleanup_pid "$process_pid"
+    play_unregister_cleanup_file "$socket"
     kill "$process_pid" >/dev/null 2>&1 || true
     rm -f "$socket"
     return 1
   fi
 
-  if play_bool "${BACKGROUND_EFFECTIVE:-false}"; then
-    play_log ok 'Player started in background.'
-    return 0
-  fi
+  local i
+  for ((i = 1; i < ${#PLAY_TARGET_URLS[@]}; i++)); do
+    if ! play_send_mpv_loadfile "$socket" "${PLAY_TARGET_URLS[i]}" append-play; then
+      play_log warn 'Failed to append URL to mpv IPC socket.'
+      play_unregister_cleanup_pid "$process_pid"
+      play_unregister_cleanup_file "$socket"
+      kill "$process_pid" >/dev/null 2>&1 || true
+      rm -f "$socket"
+      return 1
+    fi
+  done
 
-  wait "$process_pid" || true
-  rm -f "$socket"
+  disown "$process_pid" >/dev/null 2>&1 || true
+  play_unregister_cleanup_pid "$process_pid"
+  play_unregister_cleanup_file "$socket"
+  play_log ok 'Player started.'
   return 0
 }

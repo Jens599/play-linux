@@ -53,6 +53,51 @@ play_log_command() {
   printf '  %s\n' "$(play_color 33 "$command_text")"
 }
 
+play_register_cleanup_file() {
+  PLAY_CLEANUP_FILES+=("$1")
+}
+
+play_unregister_cleanup_file() {
+  local remove=$1 item
+  local remaining=()
+  for item in "${PLAY_CLEANUP_FILES[@]}"; do
+    [[ $item == "$remove" ]] || remaining+=("$item")
+  done
+  PLAY_CLEANUP_FILES=("${remaining[@]}")
+}
+
+play_register_cleanup_pid() {
+  PLAY_CLEANUP_PIDS+=("$1")
+}
+
+play_unregister_cleanup_pid() {
+  local remove=$1 item
+  local remaining=()
+  for item in "${PLAY_CLEANUP_PIDS[@]}"; do
+    [[ $item == "$remove" ]] || remaining+=("$item")
+  done
+  PLAY_CLEANUP_PIDS=("${remaining[@]}")
+}
+
+play_cleanup() {
+  local pid file
+  for pid in "${PLAY_CLEANUP_PIDS[@]}"; do
+    kill "$pid" >/dev/null 2>&1 || true
+  done
+  for file in "${PLAY_CLEANUP_FILES[@]}"; do
+    rm -f "$file"
+  done
+  PLAY_CLEANUP_PIDS=()
+  PLAY_CLEANUP_FILES=()
+}
+
+play_interrupt() {
+  trap - INT TERM
+  play_cleanup
+  printf '\nInterrupted.\n' >&2
+  exit 130
+}
+
 play_json_string() {
   local value=$1
   value=${value//\\/\\\\}

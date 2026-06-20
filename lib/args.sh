@@ -147,6 +147,9 @@ play_build_mpv_args() {
 play_apply_command_overrides() {
   PLAY_PLAYER=${COMMAND_PLAYER:-${PLAYER:-mpv}}
   PLAY_TARGET_URL=${COMMAND_URL:-$PLAY_TARGET_URL}
+  if [[ -n ${COMMAND_URL:-} ]]; then
+    PLAY_TARGET_URLS=("$COMMAND_URL")
+  fi
   if [[ -n ${COMMAND_BACKGROUND:-} ]]; then BACKGROUND_EFFECTIVE=$COMMAND_BACKGROUND; fi
 
   if [[ -n ${COMMAND_REPLACE_ARGUMENT:-} ]]; then

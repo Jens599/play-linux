@@ -23,6 +23,9 @@ assert_contains "$dry" '--ytdl-format=bestvideo\[height\<=720\]+bestaudio/best'
 assert_contains "$dry" '--no-video'
 assert_contains "$dry" '--speed=1.25'
 
+reverse_dry=$($ROOT/bin/play 'https://example.test/1' 'https://example.test/2' 'https://example.test/3' --reverse --dry-run --pass-thru)
+assert_contains "$reverse_dry" 'https://example.test/3 https://example.test/2 https://example.test/1'
+
 selected=$($ROOT/bin/play 'https://example.test/video' --select-only)
 assert_contains "$selected" $'Direct\thttps://example.test/video\thttps://example.test/video'
 

@@ -33,7 +33,7 @@ play_search_count_label() {
 }
 
 play_search_youtube() {
-  local query=$1 home=$2 playlist=$3 max=$4 cookie=$5 type=$6 encoded search_url row title id ie url duration uploader views playlist_count channel_video_count result_type count_label
+  local query=$1 home=$2 playlist=$3 max=$4 cookie=$5 type=$6 browser=${7:-} encoded search_url row title id ie url duration uploader views playlist_count channel_video_count result_type count_label
   if play_bool "$home"; then
     search_url='https://www.youtube.com/'
   else
@@ -48,6 +48,7 @@ play_search_youtube() {
 
   local args=("$search_url" --print $'%(title)s\t%(id)s\t%(ie_key)s\t%(webpage_url)s\t%(duration_string)s\t%(uploader)s\t%(view_count)s\t%(playlist_count)s\t%(channel_video_count)s' --flat-playlist --playlist-items "1:$max")
   [[ -n $cookie ]] && args+=(--cookies "$cookie")
+  [[ -z $cookie && -n $browser ]] && args+=(--cookies-from-browser "$browser")
 
   while IFS= read -r row; do
     IFS=$'\t' read -r title id ie url duration uploader views playlist_count channel_video_count <<<"$row"

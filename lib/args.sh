@@ -86,7 +86,7 @@ play_ytdl_format_expression() {
 
 play_build_mpv_args() {
   PLAY_MPV_ARGS=()
-  local geometry= autofit= format_expr
+  local geometry= autofit= format_expr ytdl_raw_options=()
   if play_enabled_command_value "${COMMAND_TERMINAL:-auto}" "$([[ ${BACKGROUND_EFFECTIVE:-false} == true ]] && printf false || printf true)"; then
     PLAY_MPV_ARGS+=(--terminal=yes)
   fi
@@ -129,13 +129,18 @@ play_build_mpv_args() {
     PLAY_MPV_ARGS+=("--watch-later-options=${COMMAND_WATCH_LATER_OPTIONS:-start,speed}")
   fi
   if play_bool "${REVERSE_PLAYLIST_EFFECTIVE:-false}"; then
-    PLAY_MPV_ARGS+=(--ytdl-raw-options=playlist-items=1- --ytdl-raw-options=playlist-reverse=)
+    ytdl_raw_options+=(playlist-items=1- playlist-reverse=)
   fi
 
   format_expr=$(play_ytdl_format_expression "${YTDL_FORMAT_EFFECTIVE:-${YTDL_FORMAT:-480p}}" "${HARDWARE_ACCEL_EFFECTIVE:-false}" "${YTDL_VIDEO_SELECTOR:-bestvideo}" "${YTDL_VIDEO_CODEC_FILTER:-auto}" "${YTDL_MAX_HEIGHT:-from_quality}" "${YTDL_AUDIO_SELECTOR:-bestaudio}" "${YTDL_FALLBACK_SELECTOR:-best}")
   PLAY_MPV_ARGS+=("--ytdl-format=$format_expr")
-  [[ -n ${COOKIE_PATH_EFFECTIVE:-} ]] && PLAY_MPV_ARGS+=("--ytdl-raw-options=cookies=${COOKIE_PATH_EFFECTIVE}")
-  play_bool "${YTDL_NO_DOWNLOAD_ARCHIVE:-true}" && PLAY_MPV_ARGS+=(--ytdl-raw-options=no-download-archive=)
+  [[ -n ${COOKIE_PATH_EFFECTIVE:-} ]] && ytdl_raw_options+=("cookies=${COOKIE_PATH_EFFECTIVE}")
+  [[ -z ${COOKIE_PATH_EFFECTIVE:-} && -n ${COOKIE_BROWSER_EFFECTIVE:-} ]] && ytdl_raw_options+=("cookies-from-browser=${COOKIE_BROWSER_EFFECTIVE}")
+  play_bool "${YTDL_NO_DOWNLOAD_ARCHIVE:-true}" && ytdl_raw_options+=(no-download-archive=)
+  if ((${#ytdl_raw_options[@]} > 0)); then
+    local IFS=,
+    PLAY_MPV_ARGS+=("--ytdl-raw-options=${ytdl_raw_options[*]}")
+  fi
   if ! play_bool "${NO_SUBTITLES_EFFECTIVE:-false}"; then
     PLAY_MPV_ARGS+=("--slang=${SUBTITLE_LANGUAGE_EFFECTIVE:-${SUBTITLE_LANGUAGE:-en}}")
   fi

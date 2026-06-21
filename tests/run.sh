@@ -23,6 +23,10 @@ assert_contains "$dry" '--ytdl-format=bestvideo\[height\<=720\]+bestaudio/best'
 assert_contains "$dry" '--no-video'
 assert_contains "$dry" '--speed=1.25'
 
+browser_cookie_dry=$($ROOT/bin/play 'https://example.test/video' --dry-run --pass-thru --cookies-from-browser firefox)
+assert_contains "$browser_cookie_dry" '--ytdl-raw-options=cookies-from-browser=firefox'
+assert_contains "$browser_cookie_dry" 'cookies-from-browser=firefox\,no-download-archive='
+
 selected=$($ROOT/bin/play 'https://example.test/video' --select-only)
 assert_contains "$selected" $'Direct\thttps://example.test/video\thttps://example.test/video'
 

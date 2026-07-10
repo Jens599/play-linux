@@ -23,10 +23,24 @@ play_launch() {
   play_section 'Playback'
   play_detail 'Title' "$PLAY_HISTORY_TITLE"
   play_detail 'Type' "$PLAY_HISTORY_TYPE"
+  [[ -n ${PLAY_HISTORY_SOURCE:-} && ${PLAY_HISTORY_SOURCE:-} != NA ]] && play_detail 'Source' "$PLAY_HISTORY_SOURCE"
+  [[ -n ${PLAY_HISTORY_DURATION:-} && ${PLAY_HISTORY_DURATION:-} != NA ]] && play_detail 'Duration' "$PLAY_HISTORY_DURATION"
+  [[ -n ${PLAY_HISTORY_VIEWS:-} && ${PLAY_HISTORY_VIEWS:-} != NA ]] && play_detail 'Views' "$PLAY_HISTORY_VIEWS"
+  [[ -n ${PLAY_HISTORY_COUNT:-} && ${PLAY_HISTORY_COUNT:-} != NA ]] && play_detail 'Items' "$PLAY_HISTORY_COUNT"
   play_detail 'URL' "$PLAY_TARGET_URL"
   if ((${#PLAY_TARGET_URLS[@]} > 1)); then
     play_detail 'Count' "${#PLAY_TARGET_URLS[@]}"
   fi
+  play_detail 'Player' "$PLAY_PLAYER"
+  play_detail 'Size' "${SIZE_EFFECTIVE:-${SIZE:-pip}}"
+  play_detail 'Format' "${YTDL_FORMAT_EFFECTIVE:-${YTDL_FORMAT:-480p}}"
+  play_detail 'Max FPS' "${YTDL_MAX_FPS:-30}"
+  play_detail 'Audio' "${AUDIO_ONLY_EFFECTIVE:-false}"
+  play_detail 'Background' "${BACKGROUND_EFFECTIVE:-false}"
+  play_detail 'Loop' "${LOOP_EFFECTIVE:-false}"
+  play_detail 'Hardware' "${HARDWARE_ACCEL_EFFECTIVE:-false}"
+  play_detail 'Subtitles' "$([[ ${NO_SUBTITLES_EFFECTIVE:-false} == true ]] && printf off || printf '%s' "${SUBTITLE_LANGUAGE_EFFECTIVE:-${SUBTITLE_LANGUAGE:-en}}")"
+  play_detail 'YTDL' "${PLAY_YTDL_FORMAT_EXPR:-}"
   if play_start_mpv_ipc; then
     return 0
   fi

@@ -134,6 +134,16 @@ play_is_url() {
   [[ $1 =~ ^https?:// ]]
 }
 
+play_normalize_url() {
+  local value=$1 amp_placeholder=$'\001'
+  value=${value//\\&/$amp_placeholder}
+  value=${value//\\\?/\?}
+  value=${value//\\=/=}
+  value=${value//\\%/%}
+  value=${value//\\#/#}
+  printf '%s\n' "$value" | tr "$amp_placeholder" '&'
+}
+
 play_limit_lines() {
   local limit=$1 file=$2 tmp
   [[ -f $file ]] || return 0

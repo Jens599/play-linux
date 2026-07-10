@@ -19,13 +19,17 @@ value=$($ROOT/bin/play --get YTDL_FORMAT)
 [[ $value == 720p ]] || { printf 'Expected YTDL_FORMAT=720p, got %s\n' "$value" >&2; exit 1; }
 
 dry=$($ROOT/bin/play 'https://example.test/video' --dry-run --pass-thru --format 720p --size small --audio-only --mpv-arg '--speed=1.25')
-assert_contains "$dry" '--ytdl-format=bestvideo\[height\<=720\]+bestaudio/best'
+assert_contains "$dry" '--ytdl-format=bestvideo\[height\<=720\]\[fps\<=30\]+bestaudio/best'
 assert_contains "$dry" '--no-video'
 assert_contains "$dry" '--speed=1.25'
 
 browser_cookie_dry=$($ROOT/bin/play 'https://example.test/video' --dry-run --pass-thru --cookies-from-browser firefox)
 assert_contains "$browser_cookie_dry" '--ytdl-raw-options=cookies-from-browser=firefox'
 assert_contains "$browser_cookie_dry" 'cookies-from-browser=firefox\,no-download-archive='
+
+$ROOT/bin/play --set YTDL_MAX_FPS=60
+fps_dry=$($ROOT/bin/play 'https://example.test/video' --dry-run --pass-thru)
+assert_contains "$fps_dry" '\[fps\<=60\]'
 
 reverse_dry=$($ROOT/bin/play 'https://example.test/1' 'https://example.test/2' 'https://example.test/3' --reverse --dry-run --pass-thru)
 assert_contains "$reverse_dry" 'https://example.test/3 https://example.test/2 https://example.test/1'

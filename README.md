@@ -62,6 +62,7 @@ Commands:
 play --config
 play --config-path
 play --set YTDL_FORMAT=720p
+play --set YTDL_MAX_FPS=60
 play --set COOKIE_BROWSER=firefox
 play --get YTDL_FORMAT
 play --config-export backup.conf
@@ -94,7 +95,7 @@ The config keeps the important mpv and `yt-dlp` knobs from the original project:
 - audio/background/loop/hardware acceleration flags
 - subtitle preferences
 - reverse playlist handling
-- `yt-dlp` video selector, codec filter, max height, audio selector, fallback selector
+- `yt-dlp` video selector, codec filter, max height, max FPS, audio selector, fallback selector
 - generated mpv command overrides
 
 Windows-only behavior from the original project is intentionally omitted.

@@ -40,6 +40,17 @@ play_search_count_label() {
   esac
 }
 
+play_search_source_label() {
+  local value
+  for value in "$@"; do
+    if [[ -n $value && $value != NA ]]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+  done
+  printf 'NA\n'
+}
+
 play_search_lookup_count() {
   local url=$1 result_type=$2 cookie=$3 browser=${4:-} lookup_url count args
   lookup_url=$url
@@ -84,7 +95,7 @@ play_search_lookup_source() {
 }
 
 play_search_youtube() {
-  local query=$1 home=$2 playlist=$3 max=$4 cookie=$5 type=$6 browser=${7:-} encoded search_url row title id ie url duration uploader views playlist_count channel_video_count result_type count_label
+  local query=$1 home=$2 playlist=$3 max=$4 cookie=$5 type=$6 browser=${7:-} encoded search_url row title id ie url duration uploader channel creator playlist_uploader views playlist_count channel_video_count result_type source count_label
   if play_bool "$home"; then
     search_url='https://www.youtube.com/'
   else
@@ -97,41 +108,42 @@ play_search_youtube() {
     fi
   fi
 
-  local args=("$search_url" --print $'%(title)s\t%(id)s\t%(ie_key)s\t%(webpage_url)s\t%(duration_string)s\t%(uploader)s\t%(view_count)s\t%(playlist_count)s\t%(channel_video_count)s' --flat-playlist --playlist-items "1:$max")
+  local args=("$search_url" --print $'%(title)s\t%(id)s\t%(ie_key)s\t%(webpage_url)s\t%(duration_string)s\t%(channel)s\t%(uploader)s\t%(creator)s\t%(playlist_uploader)s\t%(view_count)s\t%(playlist_count)s\t%(channel_video_count)s' --flat-playlist --playlist-items "1:$max")
   [[ -n $cookie ]] && args+=(--cookies "$cookie")
   [[ -z $cookie && -n $browser ]] && args+=(--cookies-from-browser "$browser")
 
   while IFS= read -r row; do
-    IFS=$'\t' read -r title id ie url duration uploader views playlist_count channel_video_count <<<"$row"
+    IFS=$'\t' read -r title id ie url duration channel uploader creator playlist_uploader views playlist_count channel_video_count <<<"$row"
     [[ -z $title || -z $id || -z $url ]] && continue
     result_type=$(play_search_type "$id" "$ie" "$url")
     [[ -n $type && $type != "$result_type" ]] && continue
+    source=$(play_search_source_label "$channel" "$uploader" "$creator" "$playlist_uploader")
     if [[ $result_type == Playlist && ( -z $playlist_count || $playlist_count == NA ) ]]; then
       playlist_count=$(play_search_lookup_count "$url" "$result_type" "$cookie" "$browser" || printf 'NA')
     elif [[ $result_type == Channel && ( -z $channel_video_count || $channel_video_count == NA ) ]]; then
       channel_video_count=$(play_search_lookup_count "$url" "$result_type" "$cookie" "$browser" || printf 'NA')
     fi
-    if [[ $result_type == Playlist && ( -z $uploader || $uploader == NA ) ]]; then
-      uploader=$(play_search_lookup_source "$url" "$cookie" "$browser" || printf 'NA')
+    if [[ $result_type == Playlist && $source == NA ]]; then
+      source=$(play_search_lookup_source "$url" "$cookie" "$browser" || printf 'NA')
     fi
     count_label=$(play_search_count_label "$result_type" "$playlist_count" "$channel_video_count")
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$result_type" "$title" "$url" "$duration" "$uploader" "$views" "$count_label"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$result_type" "$title" "$url" "$duration" "$source" "$views" "$count_label"
   done < <(yt-dlp "${args[@]}")
 }
 
 play_search_channel_playlists() {
-  local channel_url=$1 max=$2 cookie=$3 browser=${4:-} source=${5:-} playlists_url row title id ie url duration uploader views playlist_count channel_video_count count_label args
+  local channel_url=$1 max=$2 cookie=$3 browser=${4:-} source=${5:-} playlists_url row title id ie url duration channel uploader creator playlist_uploader views playlist_count channel_video_count item_source count_label args
   playlists_url=${channel_url%/}/playlists
-  args=("$playlists_url" --print $'%(title)s\t%(id)s\t%(ie_key)s\t%(webpage_url)s\t%(duration_string)s\t%(uploader)s\t%(view_count)s\t%(playlist_count)s\t%(channel_video_count)s' --flat-playlist --playlist-items "1:$max")
+  args=("$playlists_url" --print $'%(title)s\t%(id)s\t%(ie_key)s\t%(webpage_url)s\t%(duration_string)s\t%(channel)s\t%(uploader)s\t%(creator)s\t%(playlist_uploader)s\t%(view_count)s\t%(playlist_count)s\t%(channel_video_count)s' --flat-playlist --playlist-items "1:$max")
   [[ -n $cookie ]] && args+=(--cookies "$cookie")
   [[ -z $cookie && -n $browser ]] && args+=(--cookies-from-browser "$browser")
 
   while IFS= read -r row; do
-    IFS=$'\t' read -r title id ie url duration uploader views playlist_count channel_video_count <<<"$row"
+    IFS=$'\t' read -r title id ie url duration channel uploader creator playlist_uploader views playlist_count channel_video_count <<<"$row"
     [[ -z $title || -z $id || -z $url ]] && continue
-    [[ -z $uploader || $uploader == NA ]] && uploader=${source:-NA}
+    item_source=$(play_search_source_label "$channel" "$uploader" "$creator" "$playlist_uploader" "$source")
     [[ -z $playlist_count || $playlist_count == NA ]] && playlist_count=$(play_search_lookup_count "$url" Playlist "$cookie" "$browser" || printf 'NA')
     count_label=$(play_search_count_label Playlist "$playlist_count" NA)
-    printf 'Playlist\t%s\t%s\t%s\t%s\t%s\t%s\n' "$title" "$url" "$duration" "$uploader" "$views" "$count_label"
+    printf 'Playlist\t%s\t%s\t%s\t%s\t%s\t%s\n' "$title" "$url" "$duration" "$item_source" "$views" "$count_label"
   done < <(yt-dlp "${args[@]}")
 }

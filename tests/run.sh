@@ -52,4 +52,7 @@ channel_count_label=$(bash -c "source '$ROOT/lib/search.sh'; play_search_count_l
 unknown_channel_count_label=$(bash -c "source '$ROOT/lib/search.sh'; play_search_count_label Channel NA NA")
 [[ $unknown_channel_count_label == 'unknown' ]] || { printf 'Expected unknown channel count label, got %s\n' "$unknown_channel_count_label" >&2; exit 1; }
 
+source_label=$(bash -c "source '$ROOT/lib/search.sh'; play_search_source_label NA '' Atrios Creator")
+[[ $source_label == 'Atrios' ]] || { printf 'Expected source label, got %s\n' "$source_label" >&2; exit 1; }
+
 printf 'All tests passed.\n'

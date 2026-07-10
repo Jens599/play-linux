@@ -51,6 +51,7 @@ Options:
 
 Playback:
   --cookies PATH                   Use and persist cookie path
+  --cookies-from-browser BROWSER   Use and persist browser cookies
   --size pip|small|medium|max      Window size preset
   -f, --format 480p|720p|1080p|best|audio
   --audio-only                     Add --no-video
@@ -66,7 +67,7 @@ EOF
 
 SEARCH=false HOME_FEED=false PLAYLIST=false FIRST=false CLIPBOARD=false HISTORY=false LAST=false CLEAR_HISTORY=false
 DRY_RUN=false PASS_THRU=false SELECT_ONLY=false COPY_URL=false OPEN_URL=false
-TYPE= URL= COOKIE_PATH_ARG= CONFIG_EXPORT= CONFIG_IMPORT= CONFIG_SET= CONFIG_GET=
+TYPE= URL= COOKIE_PATH_ARG= COOKIE_BROWSER_ARG= CONFIG_EXPORT= CONFIG_IMPORT= CONFIG_SET= CONFIG_GET=
 MPV_EXTRA_ARGS=()
 
 while (($#)); do
@@ -86,6 +87,7 @@ while (($#)); do
     --copy-url) COPY_URL=true ;;
     --open) OPEN_URL=true ;;
     --cookies|-c) COOKIE_PATH_ARG=${2:?missing cookie path}; shift ;;
+    --cookies-from-browser) COOKIE_BROWSER_ARG=${2:?missing browser}; shift ;;
     --size|-sz) SIZE_EFFECTIVE=${2:?missing size}; shift ;;
     -f|--format) YTDL_FORMAT_EFFECTIVE=${2:?missing format}; shift ;;
     --audio-only|-a) AUDIO_ONLY_EFFECTIVE=true ;;
@@ -137,10 +139,17 @@ REVERSE_PLAYLIST_EFFECTIVE=${REVERSE_PLAYLIST_EFFECTIVE:-${REVERSE_PLAYLIST:-fal
 NO_SUBTITLES_EFFECTIVE=${NO_SUBTITLES_EFFECTIVE:-${NO_SUBTITLES:-false}}
 SUBTITLE_LANGUAGE_EFFECTIVE=${SUBTITLE_LANGUAGE_EFFECTIVE:-${SUBTITLE_LANGUAGE:-en}}
 COOKIE_PATH_EFFECTIVE=${COOKIE_PATH_ARG:-${COOKIE_PATH:-}}
+COOKIE_BROWSER_EFFECTIVE=${COOKIE_BROWSER_ARG:-${COOKIE_BROWSER:-}}
 
 if [[ -n $COOKIE_PATH_ARG ]]; then
   if [[ ! -f $COOKIE_PATH_ARG ]]; then printf 'Cookie file not found: %s\n' "$COOKIE_PATH_ARG" >&2; exit 1; fi
   play_set_config_value COOKIE_PATH "$COOKIE_PATH_ARG"
+  play_set_config_value COOKIE_BROWSER ""
+fi
+
+if [[ -n $COOKIE_BROWSER_ARG ]]; then
+  play_set_config_value COOKIE_BROWSER "$COOKIE_BROWSER_ARG"
+  play_set_config_value COOKIE_PATH ""
 fi
 
 if play_bool "$CLIPBOARD"; then URL=$(play_clipboard_get); fi
@@ -184,7 +193,7 @@ if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
     play_detail 'Type' 'Playlist' >&2
   fi
   play_log step 'Fetching results.' >&2
-  play_search_youtube "$URL" "$HOME_FEED" "$PLAYLIST" "${MAX_RESULTS:-10}" "$COOKIE_PATH_EFFECTIVE" "$NORMALIZED_TYPE" >"$tmp"
+  play_search_youtube "$URL" "$HOME_FEED" "$PLAYLIST" "${MAX_RESULTS:-10}" "$COOKIE_PATH_EFFECTIVE" "$NORMALIZED_TYPE" "$COOKIE_BROWSER_EFFECTIVE" >"$tmp"
   if [[ ! -s $tmp ]]; then printf 'No results found.\n' >&2; rm -f "$tmp"; exit 1; fi
   if play_bool "$FIRST"; then selected=$(sed -n '1p' "$tmp"); else selected=$(play_pick_result 'Search Results' "$tmp") || { rm -f "$tmp"; exit 1; }; fi
   rm -f "$tmp"

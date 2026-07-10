@@ -23,6 +23,7 @@ play_write_default_config() {
 PLAYER=mpv
 MENU_PROVIDER=fzf
 COOKIE_PATH=
+COOKIE_BROWSER=
 
 SIZE=pip
 YTDL_FORMAT=480p

@@ -27,6 +27,9 @@ browser_cookie_dry=$($ROOT/bin/play 'https://example.test/video' --dry-run --pas
 assert_contains "$browser_cookie_dry" '--ytdl-raw-options=cookies-from-browser=firefox'
 assert_contains "$browser_cookie_dry" 'cookies-from-browser=firefox\,no-download-archive='
 
+reverse_dry=$($ROOT/bin/play 'https://example.test/1' 'https://example.test/2' 'https://example.test/3' --reverse --dry-run --pass-thru)
+assert_contains "$reverse_dry" 'https://example.test/3 https://example.test/2 https://example.test/1'
+
 selected=$($ROOT/bin/play 'https://example.test/video' --select-only)
 assert_contains "$selected" $'Direct\thttps://example.test/video\thttps://example.test/video'
 

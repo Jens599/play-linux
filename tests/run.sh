@@ -37,4 +37,19 @@ assert_contains "$reverse_dry" 'https://example.test/3 https://example.test/2 ht
 selected=$($ROOT/bin/play 'https://example.test/video' --select-only)
 assert_contains "$selected" $'Direct\thttps://example.test/video\thttps://example.test/video'
 
+escaped_selected=$($ROOT/bin/play 'https://example.test/watch\?v=abc\&list=PL123' --select-only)
+assert_contains "$escaped_selected" $'Direct\thttps://example.test/watch\\?v=abc\\&list=PL123\thttps://example.test/watch?v=abc&list=PL123'
+
+playlist_count_label=$(bash -c "source '$ROOT/lib/search.sh'; play_search_count_label Playlist 42 NA")
+[[ $playlist_count_label == '42 videos' ]] || { printf 'Expected playlist count label, got %s\n' "$playlist_count_label" >&2; exit 1; }
+
+single_playlist_count_label=$(bash -c "source '$ROOT/lib/search.sh'; play_search_count_label Playlist 1 NA")
+[[ $single_playlist_count_label == '1 video' ]] || { printf 'Expected singular playlist count label, got %s\n' "$single_playlist_count_label" >&2; exit 1; }
+
+channel_count_label=$(bash -c "source '$ROOT/lib/search.sh'; play_search_count_label Channel NA 123")
+[[ $channel_count_label == '123 videos' ]] || { printf 'Expected channel count label, got %s\n' "$channel_count_label" >&2; exit 1; }
+
+unknown_channel_count_label=$(bash -c "source '$ROOT/lib/search.sh'; play_search_count_label Channel NA NA")
+[[ $unknown_channel_count_label == 'unknown' ]] || { printf 'Expected unknown channel count label, got %s\n' "$unknown_channel_count_label" >&2; exit 1; }
+
 printf 'All tests passed.\n'

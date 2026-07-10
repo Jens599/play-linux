@@ -144,6 +144,7 @@ play_build_mpv_args() {
   fi
 
   format_expr=$(play_ytdl_format_expression "${YTDL_FORMAT_EFFECTIVE:-${YTDL_FORMAT:-480p}}" "${HARDWARE_ACCEL_EFFECTIVE:-false}" "${YTDL_VIDEO_SELECTOR:-bestvideo}" "${YTDL_VIDEO_CODEC_FILTER:-auto}" "${YTDL_MAX_HEIGHT:-from_quality}" "${YTDL_MAX_FPS:-30}" "${YTDL_AUDIO_SELECTOR:-bestaudio}" "${YTDL_FALLBACK_SELECTOR:-best}")
+  PLAY_YTDL_FORMAT_EXPR=$format_expr
   PLAY_MPV_ARGS+=("--ytdl-format=$format_expr")
   [[ -n ${COOKIE_PATH_EFFECTIVE:-} ]] && ytdl_raw_options+=("cookies=${COOKIE_PATH_EFFECTIVE}")
   [[ -z ${COOKIE_PATH_EFFECTIVE:-} && -n ${COOKIE_BROWSER_EFFECTIVE:-} ]] && ytdl_raw_options+=("cookies-from-browser=${COOKIE_BROWSER_EFFECTIVE}")

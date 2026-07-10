@@ -200,6 +200,17 @@ if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
   else
     play_detail 'Query' "$URL" >&2
   fi
+  play_detail 'Results' "${MAX_RESULTS:-10}" >&2
+  if play_bool "$FIRST"; then
+    play_detail 'Picker' 'first result' >&2
+  else
+    play_detail 'Picker' "${MENU_PROVIDER:-fzf}" >&2
+  fi
+  if [[ -n $COOKIE_PATH_EFFECTIVE ]]; then
+    play_detail 'Cookies' "$COOKIE_PATH_EFFECTIVE" >&2
+  elif [[ -n $COOKIE_BROWSER_EFFECTIVE ]]; then
+    play_detail 'Cookies' "browser:$COOKIE_BROWSER_EFFECTIVE" >&2
+  fi
   if [[ -n $NORMALIZED_TYPE ]]; then
     play_detail 'Type' "$NORMALIZED_TYPE" >&2
   elif play_bool "$PLAYLIST"; then
@@ -211,7 +222,36 @@ if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
   if play_bool "$FIRST"; then selected=$(sed -n '1p' "$tmp"); else selected=$(play_pick_result 'Search Results' "$tmp") || { play_unregister_cleanup_file "$tmp"; rm -f "$tmp"; exit 1; }; fi
   play_unregister_cleanup_file "$tmp"
   rm -f "$tmp"
-  IFS=$'\t' read -r PLAY_HISTORY_TYPE PLAY_HISTORY_TITLE PLAY_TARGET_URL _ _ _ <<<"$selected"
+  IFS=$'\t' read -r PLAY_HISTORY_TYPE PLAY_HISTORY_TITLE PLAY_TARGET_URL PLAY_HISTORY_DURATION PLAY_HISTORY_SOURCE PLAY_HISTORY_VIEWS PLAY_HISTORY_COUNT <<<"$selected"
+  play_section 'Selected' >&2
+  play_detail 'Title' "$PLAY_HISTORY_TITLE" >&2
+  play_detail 'Type' "$PLAY_HISTORY_TYPE" >&2
+  [[ -n ${PLAY_HISTORY_SOURCE:-} && ${PLAY_HISTORY_SOURCE:-} != NA ]] && play_detail 'Source' "$PLAY_HISTORY_SOURCE" >&2
+  [[ -n ${PLAY_HISTORY_DURATION:-} && ${PLAY_HISTORY_DURATION:-} != NA ]] && play_detail 'Duration' "$PLAY_HISTORY_DURATION" >&2
+  [[ -n ${PLAY_HISTORY_VIEWS:-} && ${PLAY_HISTORY_VIEWS:-} != NA ]] && play_detail 'Views' "$PLAY_HISTORY_VIEWS" >&2
+  [[ -n ${PLAY_HISTORY_COUNT:-} && ${PLAY_HISTORY_COUNT:-} != NA ]] && play_detail 'Items' "$PLAY_HISTORY_COUNT" >&2
+  play_detail 'URL' "$PLAY_TARGET_URL" >&2
+  if [[ $PLAY_HISTORY_TYPE == ChannelPlaylists ]]; then
+    tmp=$(mktemp)
+    play_register_cleanup_file "$tmp"
+    play_section 'Channel Playlists' >&2
+    play_detail 'Channel' "$PLAY_HISTORY_TITLE" >&2
+    play_log step 'Fetching playlists.' >&2
+    play_search_channel_playlists "$PLAY_TARGET_URL" "${MAX_RESULTS:-10}" "$COOKIE_PATH_EFFECTIVE" "$COOKIE_BROWSER_EFFECTIVE" "${PLAY_HISTORY_SOURCE:-$PLAY_HISTORY_TITLE}" >"$tmp"
+    if [[ ! -s $tmp ]]; then play_unregister_cleanup_file "$tmp"; printf 'No playlists found.\n' >&2; rm -f "$tmp"; exit 1; fi
+    selected=$(play_pick_result 'Channel Playlists' "$tmp") || { play_unregister_cleanup_file "$tmp"; rm -f "$tmp"; exit 1; }
+    play_unregister_cleanup_file "$tmp"
+    rm -f "$tmp"
+    IFS=$'\t' read -r PLAY_HISTORY_TYPE PLAY_HISTORY_TITLE PLAY_TARGET_URL PLAY_HISTORY_DURATION PLAY_HISTORY_SOURCE PLAY_HISTORY_VIEWS PLAY_HISTORY_COUNT <<<"$selected"
+    play_section 'Selected' >&2
+    play_detail 'Title' "$PLAY_HISTORY_TITLE" >&2
+    play_detail 'Type' "$PLAY_HISTORY_TYPE" >&2
+    [[ -n ${PLAY_HISTORY_SOURCE:-} && ${PLAY_HISTORY_SOURCE:-} != NA ]] && play_detail 'Source' "$PLAY_HISTORY_SOURCE" >&2
+    [[ -n ${PLAY_HISTORY_DURATION:-} && ${PLAY_HISTORY_DURATION:-} != NA ]] && play_detail 'Duration' "$PLAY_HISTORY_DURATION" >&2
+    [[ -n ${PLAY_HISTORY_VIEWS:-} && ${PLAY_HISTORY_VIEWS:-} != NA ]] && play_detail 'Views' "$PLAY_HISTORY_VIEWS" >&2
+    [[ -n ${PLAY_HISTORY_COUNT:-} && ${PLAY_HISTORY_COUNT:-} != NA ]] && play_detail 'Items' "$PLAY_HISTORY_COUNT" >&2
+    play_detail 'URL' "$PLAY_TARGET_URL" >&2
+  fi
   PLAY_TARGET_URLS=("$PLAY_TARGET_URL")
 else
   if ((${#POSITIONAL[@]} > 0)) && ! play_bool "$CLIPBOARD" && ! play_bool "$LAST" && ! play_bool "$HISTORY"; then
@@ -229,6 +269,11 @@ else
   done
   PLAY_TARGET_URL=${PLAY_TARGET_URLS[0]}
 fi
+
+for i in "${!PLAY_TARGET_URLS[@]}"; do
+  PLAY_TARGET_URLS[i]=$(play_normalize_url "${PLAY_TARGET_URLS[i]}")
+done
+PLAY_TARGET_URL=${PLAY_TARGET_URLS[0]}
 
 if play_bool "$SELECT_ONLY"; then printf '%s\t%s\t%s\n' "$PLAY_HISTORY_TYPE" "$PLAY_HISTORY_TITLE" "$PLAY_TARGET_URL"; exit; fi
 if play_bool "$COPY_URL"; then play_clipboard_set "$PLAY_TARGET_URL"; printf 'Copied URL: %s\n' "$PLAY_TARGET_URL"; exit; fi

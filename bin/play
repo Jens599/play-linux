@@ -200,7 +200,7 @@ if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
   else
     play_detail 'Query' "$URL" >&2
   fi
-  play_detail 'Results' "${MAX_RESULTS:-10}" >&2
+  play_detail 'Results' "${MAX_RESULTS:-40}" >&2
   if play_bool "$FIRST"; then
     play_detail 'Picker' 'first result' >&2
   else
@@ -217,7 +217,7 @@ if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
     play_detail 'Type' 'Playlist' >&2
   fi
   play_log step 'Fetching results.' >&2
-  play_search_youtube "$URL" "$HOME_FEED" "$PLAYLIST" "${MAX_RESULTS:-10}" "$COOKIE_PATH_EFFECTIVE" "$NORMALIZED_TYPE" "$COOKIE_BROWSER_EFFECTIVE" >"$tmp"
+  play_search_youtube "$URL" "$HOME_FEED" "$PLAYLIST" "${MAX_RESULTS:-40}" "$COOKIE_PATH_EFFECTIVE" "$NORMALIZED_TYPE" "$COOKIE_BROWSER_EFFECTIVE" >"$tmp"
   if [[ ! -s $tmp ]]; then play_unregister_cleanup_file "$tmp"; printf 'No results found.\n' >&2; rm -f "$tmp"; exit 1; fi
   if play_bool "$FIRST"; then selected=$(sed -n '1p' "$tmp"); else selected=$(play_pick_result 'Search Results' "$tmp") || { play_unregister_cleanup_file "$tmp"; rm -f "$tmp"; exit 1; }; fi
   play_unregister_cleanup_file "$tmp"
@@ -237,7 +237,7 @@ if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
     play_section 'Channel Playlists' >&2
     play_detail 'Channel' "$PLAY_HISTORY_TITLE" >&2
     play_log step 'Fetching playlists.' >&2
-    play_search_channel_playlists "$PLAY_TARGET_URL" "${MAX_RESULTS:-10}" "$COOKIE_PATH_EFFECTIVE" "$COOKIE_BROWSER_EFFECTIVE" "${PLAY_HISTORY_SOURCE:-$PLAY_HISTORY_TITLE}" >"$tmp"
+    play_search_channel_playlists "$PLAY_TARGET_URL" "${MAX_RESULTS:-40}" "$COOKIE_PATH_EFFECTIVE" "$COOKIE_BROWSER_EFFECTIVE" "${PLAY_HISTORY_SOURCE:-$PLAY_HISTORY_TITLE}" >"$tmp"
     if [[ ! -s $tmp ]]; then play_unregister_cleanup_file "$tmp"; printf 'No playlists found.\n' >&2; rm -f "$tmp"; exit 1; fi
     selected=$(play_pick_result 'Channel Playlists' "$tmp") || { play_unregister_cleanup_file "$tmp"; rm -f "$tmp"; exit 1; }
     play_unregister_cleanup_file "$tmp"

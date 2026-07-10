@@ -123,7 +123,7 @@ play_search_youtube() {
     elif [[ $result_type == Channel && ( -z $channel_video_count || $channel_video_count == NA ) ]]; then
       channel_video_count=$(play_search_lookup_count "$url" "$result_type" "$cookie" "$browser" || printf 'NA')
     fi
-    if [[ $result_type == Playlist && $source == NA ]]; then
+    if [[ $source == NA ]]; then
       source=$(play_search_lookup_source "$url" "$cookie" "$browser" || printf 'NA')
     fi
     count_label=$(play_search_count_label "$result_type" "$playlist_count" "$channel_video_count")

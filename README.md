@@ -63,6 +63,7 @@ play --config
 play --config-path
 play --set YTDL_FORMAT=720p
 play --set YTDL_MAX_FPS=60
+play --set MAX_RESULTS=40
 play --set COOKIE_BROWSER=firefox
 play --get YTDL_FORMAT
 play --config-export backup.conf
@@ -91,6 +92,7 @@ The config keeps the important mpv and `yt-dlp` knobs from the original project:
 - player command
 - menu provider
 - cookie path and browser cookie extraction
+- default fetched search result count
 - size and format presets
 - audio/background/loop/hardware acceleration flags
 - subtitle preferences

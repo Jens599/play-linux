@@ -18,6 +18,9 @@ $ROOT/bin/play --set YTDL_FORMAT=720p
 value=$($ROOT/bin/play --get YTDL_FORMAT)
 [[ $value == 720p ]] || { printf 'Expected YTDL_FORMAT=720p, got %s\n' "$value" >&2; exit 1; }
 
+max_results=$($ROOT/bin/play --get MAX_RESULTS)
+[[ $max_results == 40 ]] || { printf 'Expected MAX_RESULTS=40, got %s\n' "$max_results" >&2; exit 1; }
+
 dry=$($ROOT/bin/play 'https://example.test/video' --dry-run --pass-thru --format 720p --size small --audio-only --mpv-arg '--speed=1.25')
 assert_contains "$dry" '--ytdl-format=bestvideo\[height\<=720\]\[fps\<=30\]+bestaudio/best'
 assert_contains "$dry" '--no-video'

@@ -72,6 +72,7 @@ play --config-import backup.conf
 
 ```bash
 play 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+play 'https://example.test/one' 'https://example.test/two' --reverse
 play -s 'never gonna give you up'
 play -s 'lofi beats' --first --format audio
 play -s 'live coding' --type playlist

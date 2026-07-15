@@ -40,6 +40,24 @@ assert_contains "$selected" $'Direct\thttps://example.test/video\thttps://exampl
 escaped_selected=$($ROOT/bin/play 'https://example.test/watch\?v=abc\&list=PL123' --select-only)
 assert_contains "$escaped_selected" $'Direct\thttps://example.test/watch\\?v=abc\\&list=PL123\thttps://example.test/watch?v=abc&list=PL123'
 
+completion_home=$(mktemp -d)
+printf 'if command -v zsh >/dev/null 2>&1; then\n  exec zsh -l\nfi\n' >"$completion_home/.bashrc"
+printf 'compinit\n' >"$completion_home/.zshrc"
+HOME=$completion_home XDG_DATA_HOME= $ROOT/bin/play --install-bash-completion >/dev/null
+[[ -f $completion_home/.local/share/play/completion.bash ]] || { printf 'Completion file was not created.\n' >&2; exit 1; }
+[[ -f $completion_home/.bashrc ]] || { printf '.bashrc was not created.\n' >&2; exit 1; }
+completion_script=$(<"$completion_home/.local/share/play/completion.bash")
+completion_bashrc=$(<"$completion_home/.bashrc")
+completion_zshrc=$(<"$completion_home/.zshrc")
+assert_contains "$completion_script" 'complete -F _play_complete play'
+assert_contains "$completion_bashrc" '# >>> play bash completion >>>'
+assert_contains "$completion_zshrc" '# >>> play zsh completion >>>'
+assert_contains "$completion_zshrc" 'bashcompinit'
+completion_marker_line=$(awk '/# >>> play bash completion >>>/ { print NR; exit }' "$completion_home/.bashrc")
+completion_exec_line=$(awk '/exec zsh -l/ { print NR; exit }' "$completion_home/.bashrc")
+((completion_marker_line < completion_exec_line)) || { printf 'Completion block was not inserted before exec zsh.\n' >&2; exit 1; }
+rm -rf "$completion_home"
+
 playlist_count_label=$(bash -c "source '$ROOT/lib/search.sh'; play_search_count_label Playlist 42 NA")
 [[ $playlist_count_label == '42 videos' ]] || { printf 'Expected playlist count label, got %s\n' "$playlist_count_label" >&2; exit 1; }
 

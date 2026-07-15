@@ -16,8 +16,10 @@ play_launch() {
   if ((${#PLAY_TARGET_URLS[@]} == 1)); then
     play_add_history "$PLAY_HISTORY_TYPE" "$PLAY_HISTORY_TITLE" "$PLAY_TARGET_URL"
   else
-    for target_url in "${PLAY_TARGET_URLS[@]}"; do
-      play_add_history "$PLAY_HISTORY_TYPE" "$target_url" "$target_url"
+    local i target_title
+    for i in "${!PLAY_TARGET_URLS[@]}"; do
+      target_title=${PLAY_TARGET_TITLES[i]:-${PLAY_TARGET_URLS[i]}}
+      play_add_history "$PLAY_HISTORY_TYPE" "$target_title" "${PLAY_TARGET_URLS[i]}"
     done
   fi
   play_section 'Playback'
@@ -70,9 +72,32 @@ play_wait_for_socket() {
 }
 
 play_send_mpv_loadfile() {
-  local socket=$1 target_url=$2 mode=$3 url_json payload
+  local socket=$1 target_url=$2 mode=$3 title=${4:-} url_json title_json payload
   url_json=$(play_json_string "$target_url")
-  payload='{"command":["loadfile",'"$url_json"',"'"$mode"'"]}'
+  if [[ -n $title ]]; then
+    title_json=$(play_json_string "$title")
+    payload='{"command":["loadfile",'"$url_json"',"'"$mode"'",-1,{"force-media-title":'"$title_json"'}]}'
+  else
+    payload='{"command":["loadfile",'"$url_json"',"'"$mode"'"]}'
+  fi
+  printf '%s\n' "$payload" | socat - "UNIX-CONNECT:$socket" >/dev/null 2>&1
+}
+
+play_write_mpv_playlist() {
+  local playlist_file=$1 i title
+  printf '#EXTM3U\n' >"$playlist_file"
+  for i in "${!PLAY_TARGET_URLS[@]}"; do
+    title=${PLAY_TARGET_TITLES[i]:-${PLAY_TARGET_URLS[i]}}
+    title=${title//$'\r'/ }
+    title=${title//$'\n'/ }
+    printf '#EXTINF:-1,%s\n%s\n' "$title" "${PLAY_TARGET_URLS[i]}" >>"$playlist_file"
+  done
+}
+
+play_send_mpv_loadlist() {
+  local socket=$1 playlist_file=$2 file_json payload
+  file_json=$(play_json_string "$playlist_file")
+  payload='{"command":["loadlist",'"$file_json"',"replace"]}'
   printf '%s\n' "$payload" | socat - "UNIX-CONNECT:$socket" >/dev/null 2>&1
 }
 
@@ -103,7 +128,28 @@ play_start_mpv_ipc() {
   fi
 
   play_log step 'Loading stream.'
-  if ! play_send_mpv_loadfile "$socket" "${PLAY_TARGET_URLS[0]}" replace; then
+  if ((${#PLAY_TARGET_URLS[@]} > 1)); then
+    local playlist_file
+    playlist_file=$(mktemp)
+    play_write_mpv_playlist "$playlist_file"
+    if ! play_send_mpv_loadlist "$socket" "$playlist_file"; then
+      rm -f "$playlist_file"
+      play_log warn 'Failed to send playlist to mpv IPC socket.'
+      play_unregister_cleanup_pid "$process_pid"
+      play_unregister_cleanup_file "$socket"
+      kill "$process_pid" >/dev/null 2>&1 || true
+      rm -f "$socket"
+      return 1
+    fi
+    rm -f "$playlist_file"
+    disown "$process_pid" >/dev/null 2>&1 || true
+    play_unregister_cleanup_pid "$process_pid"
+    play_unregister_cleanup_file "$socket"
+    play_log ok 'Player started.'
+    return 0
+  fi
+
+  if ! play_send_mpv_loadfile "$socket" "${PLAY_TARGET_URLS[0]}" replace "${PLAY_TARGET_TITLES[0]:-}"; then
     play_log warn 'Failed to send URL to mpv IPC socket.'
     play_unregister_cleanup_pid "$process_pid"
     play_unregister_cleanup_file "$socket"
@@ -111,18 +157,6 @@ play_start_mpv_ipc() {
     rm -f "$socket"
     return 1
   fi
-
-  local i
-  for ((i = 1; i < ${#PLAY_TARGET_URLS[@]}; i++)); do
-    if ! play_send_mpv_loadfile "$socket" "${PLAY_TARGET_URLS[i]}" append-play; then
-      play_log warn 'Failed to append URL to mpv IPC socket.'
-      play_unregister_cleanup_pid "$process_pid"
-      play_unregister_cleanup_file "$socket"
-      kill "$process_pid" >/dev/null 2>&1 || true
-      rm -f "$socket"
-      return 1
-    fi
-  done
 
   disown "$process_pid" >/dev/null 2>&1 || true
   play_unregister_cleanup_pid "$process_pid"

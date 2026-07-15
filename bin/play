@@ -38,6 +38,7 @@ Options:
   -p, --playlist                   Playlist search
   -t, --type video|playlist|channel
   --channel-playlists              Pick playlists from a channel URL/search
+  --playlist-results N             Initial channel playlist results count
   --first                          Select first result without picker
   --clipboard                      Read URL from clipboard
   --copy-url                       Copy resolved URL instead of playing
@@ -201,7 +202,7 @@ play_pick_channel_playlists() {
   play_section 'Channel Playlists' >&2
   play_detail 'Channel' "$channel_title" >&2
   play_log step 'Fetching playlists.' >&2
-  result_batch=${MAX_RESULTS:-10}
+  result_batch=${PLAYLIST_RESULTS_ARG:-${MAX_RESULTS:-10}}
   result_end=$result_batch
   play_search_channel_playlists "$channel_url" "$result_end" "$COOKIE_PATH_EFFECTIVE" "$COOKIE_BROWSER_EFFECTIVE" "$channel_source" >"$tmp"
   if [[ ! -s $tmp ]]; then play_unregister_cleanup_file "$tmp"; printf 'No playlists found.\n' >&2; rm -f "$tmp"; return 1; fi
@@ -298,6 +299,10 @@ _play_complete() {
       COMPREPLY=($(compgen -W 'firefox chrome chromium brave vivaldi edge opera' -- "$cur"))
       return
       ;;
+    --playlist-results)
+      COMPREPLY=($(compgen -W '10 20 30 50 100' -- "$cur"))
+      return
+      ;;
     --subtitle-language)
       COMPREPLY=($(compgen -W 'en ja es fr de ko zh ru pt it' -- "$cur"))
       return
@@ -308,7 +313,7 @@ _play_complete() {
       ;;
   esac
 
-  opts='--search -s --home --playlist -p --type -t --channel-playlists --channel-playlist --first -fi --clipboard --history --last --clear-history --dry-run --pass-thru --reverse --select-only --copy-url --open --cookies -c --cookies-from-browser --size -sz --format -f --audio-only -a --background -b --loop -l --hwdec -h --reverse-playlist -r --no-subtitles --subtitle-language --mpv-arg --config --config-path --config-export --config-import --install-bash-completion --set --get --doctor --help -help'
+  opts='--search -s --home --playlist -p --type -t --channel-playlists --channel-playlist --playlist-results --first -fi --clipboard --history --last --clear-history --dry-run --pass-thru --reverse --select-only --copy-url --open --cookies -c --cookies-from-browser --size -sz --format -f --audio-only -a --background -b --loop -l --hwdec -h --reverse-playlist -r --no-subtitles --subtitle-language --mpv-arg --config --config-path --config-export --config-import --install-bash-completion --set --get --doctor --help -help'
   if [[ $cur == -* ]]; then
     COMPREPLY=($(compgen -W "$opts" -- "$cur"))
   else
@@ -393,7 +398,7 @@ EOF
 SEARCH=false HOME_FEED=false PLAYLIST=false CHANNEL_PLAYLISTS=false FIRST=false CLIPBOARD=false HISTORY=false LAST=false CLEAR_HISTORY=false
 DRY_RUN=false PASS_THRU=false SELECT_ONLY=false COPY_URL=false OPEN_URL=false
 REVERSE_URLS=false
-TYPE= URL= COOKIE_PATH_ARG= COOKIE_BROWSER_ARG= CONFIG_EXPORT= CONFIG_IMPORT= CONFIG_SET= CONFIG_GET=
+TYPE= URL= COOKIE_PATH_ARG= COOKIE_BROWSER_ARG= CONFIG_EXPORT= CONFIG_IMPORT= CONFIG_SET= CONFIG_GET= PLAYLIST_RESULTS_ARG=
 POSITIONAL=()
 MPV_EXTRA_ARGS=()
 PLAY_TARGET_TITLES=()
@@ -405,6 +410,7 @@ while (($#)); do
     --home) HOME_FEED=true ;;
     -p|--playlist) PLAYLIST=true ;;
     --channel-playlists|--channel-playlist) CHANNEL_PLAYLISTS=true ;;
+    --playlist-results) PLAYLIST_RESULTS_ARG=${2:?missing playlist results count}; shift ;;
     --first|-fi) FIRST=true ;;
     -t|--type) TYPE=${2:?missing type}; shift ;;
     --clipboard) CLIPBOARD=true ;;
@@ -457,6 +463,11 @@ fi
 if [[ -n $CONFIG_GET ]]; then
   eval "printf '%s\n' \"\${$CONFIG_GET:-}\""
   exit
+fi
+
+if [[ -n $PLAYLIST_RESULTS_ARG && ! $PLAYLIST_RESULTS_ARG =~ ^[1-9][0-9]*$ ]]; then
+  printf '%s\n' '--playlist-results requires a positive integer.' >&2
+  exit 2
 fi
 
 if play_bool "$CLEAR_HISTORY"; then play_clear_history; exit; fi

@@ -37,6 +37,7 @@ Options:
   -s, --search                     Treat input as search query
   -p, --playlist                   Playlist search
   -t, --type video|playlist|channel
+  --channel-playlists              Pick playlists from a channel URL/search
   --first                          Select first result without picker
   --clipboard                      Read URL from clipboard
   --copy-url                       Copy resolved URL instead of playing
@@ -44,12 +45,13 @@ Options:
   --select-only                    Print selected item as TSV
   --dry-run                        Print command without starting player
   --pass-thru                      With --dry-run, print machine-readable fields
-  --reverse                        Play direct URLs in reverse order
+  --reverse                        Reverse selected URL/order targets
   --clear-history                  Clear history
   --config                         Open config in $EDITOR
   --config-path                    Print config path
   --config-export PATH             Export config
   --config-import PATH             Import config
+  --install-bash-completion        Install bash completion for this user
   --set KEY=VALUE                  Set a config value
   --get KEY                        Print a config value
   --doctor                         Show dependency/config diagnostics
@@ -63,7 +65,7 @@ Playback:
   --background                     Start player in background
   --loop                           Loop playback
   --hwdec                          Enable hardware acceleration
-  --reverse-playlist               Reverse playlist playback
+  --reverse-playlist               Reverse videos inside playlist URLs
   --no-subtitles                   Omit subtitle preference
   --subtitle-language en,ja        Preferred subtitle language(s)
   --mpv-arg ARG                    Append custom mpv argument
@@ -75,6 +77,7 @@ play_apply_selected_rows() {
   local type title url duration source views count
   PLAY_TARGET_URLS=()
   PLAY_TARGET_TITLES=()
+  PLAY_TARGET_TYPES=()
 
   while IFS= read -r row; do
     [[ -z $row ]] && continue
@@ -90,6 +93,7 @@ play_apply_selected_rows() {
     fi
     PLAY_TARGET_URLS+=("$url")
     PLAY_TARGET_TITLES+=("$title")
+    PLAY_TARGET_TYPES+=("$type")
   done <<<"$rows"
 
   ((${#PLAY_TARGET_URLS[@]} > 0))
@@ -106,22 +110,301 @@ play_show_selected() {
   play_detail 'URL' "$PLAY_TARGET_URL" >&2
   if ((${#PLAY_TARGET_URLS[@]} > 1)); then
     play_detail 'Count' "${#PLAY_TARGET_URLS[@]}" >&2
+    local i item_title
+    for i in "${!PLAY_TARGET_URLS[@]}"; do
+      item_title=${PLAY_TARGET_TITLES[i]:-${PLAY_TARGET_URLS[i]}}
+      printf '  %s %02d. %s\n' "$(play_color 90 'Item      ')" "$((i + 1))" "$item_title" >&2
+    done
   fi
 }
 
-SEARCH=false HOME_FEED=false PLAYLIST=false FIRST=false CLIPBOARD=false HISTORY=false LAST=false CLEAR_HISTORY=false
+play_reverse_targets() {
+  local i
+  local reversed=()
+  local reversed_titles=()
+  local reversed_types=()
+  for ((i = ${#PLAY_TARGET_URLS[@]} - 1; i >= 0; i--)); do reversed+=("${PLAY_TARGET_URLS[i]}"); done
+  for ((i = ${#PLAY_TARGET_TITLES[@]} - 1; i >= 0; i--)); do reversed_titles+=("${PLAY_TARGET_TITLES[i]}"); done
+  for ((i = ${#PLAY_TARGET_TYPES[@]} - 1; i >= 0; i--)); do reversed_types+=("${PLAY_TARGET_TYPES[i]}"); done
+  PLAY_TARGET_URLS=("${reversed[@]}")
+  PLAY_TARGET_TITLES=("${reversed_titles[@]}")
+  PLAY_TARGET_TYPES=("${reversed_types[@]}")
+  PLAY_TARGET_URL=${PLAY_TARGET_URLS[0]}
+}
+
+play_is_playlist_target() {
+  local index=$1 target_url
+  target_url=${PLAY_TARGET_URLS[$index]}
+  [[ ${PLAY_TARGET_TYPES[$index]:-} == Playlist || $target_url == *'youtube.com/playlist?list='* || $target_url == *'&list='* || $target_url == *'?list='* ]]
+}
+
+play_expand_reversed_playlist_targets() {
+  local i target_url target_title row title url args
+  local expanded_urls=() expanded_titles=() expanded_types=() changed=false
+  play_bool "${REVERSE_PLAYLIST_EFFECTIVE:-false}" || return 0
+  play_has yt-dlp || return 0
+
+  for i in "${!PLAY_TARGET_URLS[@]}"; do
+    target_url=${PLAY_TARGET_URLS[i]}
+    target_title=${PLAY_TARGET_TITLES[i]:-$target_url}
+    if ! play_is_playlist_target "$i"; then
+      expanded_urls+=("$target_url")
+      expanded_titles+=("$target_title")
+      expanded_types+=("${PLAY_TARGET_TYPES[i]:-Direct}")
+      continue
+    fi
+
+    play_log step "Expanding reversed playlist: $target_title" >&2
+    args=("$target_url" --flat-playlist --playlist-items 1- --playlist-reverse --print $'%(title)s\t%(webpage_url)s')
+    [[ -n ${COOKIE_PATH_EFFECTIVE:-} ]] && args+=(--cookies "$COOKIE_PATH_EFFECTIVE")
+    [[ -z ${COOKIE_PATH_EFFECTIVE:-} && -n ${COOKIE_BROWSER_EFFECTIVE:-} ]] && args+=(--cookies-from-browser "$COOKIE_BROWSER_EFFECTIVE")
+
+    while IFS= read -r row; do
+      IFS=$'\t' read -r title url <<<"$row"
+      [[ -z $url || $url == NA ]] && continue
+      expanded_urls+=("$url")
+      expanded_titles+=("${title:-$url}")
+      expanded_types+=(Video)
+      changed=true
+    done < <(yt-dlp "${args[@]}" 2>/dev/null)
+  done
+
+  if play_bool "$changed"; then
+    PLAY_TARGET_URLS=("${expanded_urls[@]}")
+    PLAY_TARGET_TITLES=("${expanded_titles[@]}")
+    PLAY_TARGET_TYPES=("${expanded_types[@]}")
+    PLAY_TARGET_URL=${PLAY_TARGET_URLS[0]}
+    REVERSE_PLAYLIST_EFFECTIVE=false
+  fi
+}
+
+play_select_exact_channel_row() {
+  local rows=$1 query=$2 row type title url duration source views count match=
+  while IFS= read -r row; do
+    [[ -z $row ]] && continue
+    IFS=$'\t' read -r type title url duration source views count <<<"$row"
+    if [[ $type == Channel && ( ${title,,} == ${query,,} || ${source,,} == ${query,,} ) ]]; then
+      if [[ -n $match ]]; then return 1; fi
+      match=$row
+    fi
+  done <<<"$rows"
+  [[ -n $match ]] || return 1
+  printf '%s\n' "$match"
+}
+
+play_pick_channel_playlists() {
+  local channel_url=$1 channel_title=$2 channel_source=${3:-$2}
+  local tmp selected result_batch result_end more_cmd state_file
+
+  tmp=$(mktemp)
+  play_register_cleanup_file "$tmp"
+  play_section 'Channel Playlists' >&2
+  play_detail 'Channel' "$channel_title" >&2
+  play_log step 'Fetching playlists.' >&2
+  result_batch=${MAX_RESULTS:-10}
+  result_end=$result_batch
+  play_search_channel_playlists "$channel_url" "$result_end" "$COOKIE_PATH_EFFECTIVE" "$COOKIE_BROWSER_EFFECTIVE" "$channel_source" >"$tmp"
+  if [[ ! -s $tmp ]]; then play_unregister_cleanup_file "$tmp"; printf 'No playlists found.\n' >&2; rm -f "$tmp"; return 1; fi
+  state_file=$(mktemp)
+  play_register_cleanup_file "$state_file"
+  printf '%s\n' "$result_end" >"$state_file"
+  more_cmd=$(play_make_more_results_command channel "$tmp" "$state_file" "$result_batch" "$channel_url" "$channel_source")
+  selected=$(play_pick_result 'Channel Playlists' "$tmp" true true "$more_cmd") || { play_unregister_cleanup_file "$tmp"; play_unregister_cleanup_file "$state_file"; rm -f "$tmp" "$state_file"; return 1; }
+  play_unregister_cleanup_file "$state_file"
+  rm -f "$state_file"
+  play_unregister_cleanup_file "$tmp"
+  rm -f "$tmp"
+  play_apply_selected_rows "$selected"
+}
+
+play_make_more_results_command() {
+  local mode=$1 input_file=$2 state_file=$3 batch=$4 query_or_url=$5 source=${6:-}
+  local cmd_file
+  cmd_file=$(mktemp)
+  play_register_cleanup_file "$cmd_file"
+  cat >"$cmd_file" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+source $(printf '%q' "$PLAY_ROOT/lib/config.sh")
+source $(printf '%q' "$PLAY_ROOT/lib/utils.sh")
+source $(printf '%q' "$PLAY_ROOT/lib/search.sh")
+input_file=$(printf '%q' "$input_file")
+state_file=$(printf '%q' "$state_file")
+batch=$(printf '%q' "$batch")
+mode=$(printf '%q' "$mode")
+query_or_url=$(printf '%q' "$query_or_url")
+source_label=$(printf '%q' "$source")
+home=$(printf '%q' "${HOME_FEED:-false}")
+playlist=$(printf '%q' "${PLAYLIST:-false}")
+type=$(printf '%q' "${NORMALIZED_TYPE:-}")
+cookie=$(printf '%q' "${COOKIE_PATH_EFFECTIVE:-}")
+browser=$(printf '%q' "${COOKIE_BROWSER_EFFECTIVE:-}")
+end=\$(<"\$state_file")
+start=\$((end + 1))
+end=\$((end + batch))
+tmp=\$(mktemp)
+trap 'rm -f "\$tmp"' EXIT
+if [[ \$mode == channel ]]; then
+  play_search_channel_playlists "\$query_or_url" "\$end" "\$cookie" "\$browser" "\$source_label" "\$start" >"\$tmp"
+else
+  play_search_youtube "\$query_or_url" "\$home" "\$playlist" "\$end" "\$cookie" "\$type" "\$browser" "\$start" >"\$tmp"
+fi
+if [[ -s \$tmp ]]; then
+  cat "\$tmp" >>"\$input_file"
+  printf '%s\n' "\$end" >"\$state_file"
+fi
+EOF
+  chmod +x "$cmd_file"
+  printf '%q\n' "$cmd_file"
+}
+
+play_install_bash_completion() {
+  local completion_dir completion_file bashrc zshrc marker_begin marker_end zsh_marker_begin zsh_marker_end block_file tmp_bashrc tmp_zshrc
+  completion_dir=${XDG_DATA_HOME:-$HOME/.local/share}/play
+  completion_file=$completion_dir/completion.bash
+  bashrc=$HOME/.bashrc
+  zshrc=$HOME/.zshrc
+  marker_begin='# >>> play bash completion >>>'
+  marker_end='# <<< play bash completion <<<'
+  zsh_marker_begin='# >>> play zsh completion >>>'
+  zsh_marker_end='# <<< play zsh completion <<<'
+
+  mkdir -p "$completion_dir"
+  cat >"$completion_file" <<'EOF'
+_play_complete() {
+  local cur prev opts
+  COMPREPLY=()
+  cur=${COMP_WORDS[COMP_CWORD]}
+  prev=${COMP_WORDS[COMP_CWORD-1]}
+
+  case "$prev" in
+    -t|--type)
+      COMPREPLY=($(compgen -W 'video playlist channel' -- "$cur"))
+      return
+      ;;
+    --size|-sz)
+      COMPREPLY=($(compgen -W 'pip small medium max' -- "$cur"))
+      return
+      ;;
+    -f|--format)
+      COMPREPLY=($(compgen -W '480p 720p 1080p best audio' -- "$cur"))
+      return
+      ;;
+    --cookies|--config-export|--config-import)
+      COMPREPLY=($(compgen -f -- "$cur"))
+      return
+      ;;
+    --cookies-from-browser)
+      COMPREPLY=($(compgen -W 'firefox chrome chromium brave vivaldi edge opera' -- "$cur"))
+      return
+      ;;
+    --subtitle-language)
+      COMPREPLY=($(compgen -W 'en ja es fr de ko zh ru pt it' -- "$cur"))
+      return
+      ;;
+    --set)
+      COMPREPLY=($(compgen -W 'PLAYER= MENU_PROVIDER= COOKIE_PATH= COOKIE_BROWSER= SIZE= YTDL_FORMAT= MAX_RESULTS= PLAY_COLOR= AUDIO_ONLY= BACKGROUND= LOOP= HARDWARE_ACCEL= REVERSE_PLAYLIST= NO_SUBTITLES= SUBTITLE_LANGUAGE= REMEMBER_PLAYBACK_SPEED= YTDL_VIDEO_SELECTOR= YTDL_VIDEO_CODEC_FILTER= YTDL_MAX_HEIGHT= YTDL_MAX_FPS= YTDL_AUDIO_SELECTOR= YTDL_FALLBACK_SELECTOR= YTDL_NO_DOWNLOAD_ARCHIVE= COMMAND_TERMINAL= COMMAND_GEOMETRY= COMMAND_AUTOFIT= COMMAND_NO_BORDER= COMMAND_ONTOP= COMMAND_HWDEC= COMMAND_SAVE_POSITION= COMMAND_WATCH_LATER_OPTIONS= COMMAND_PLAYER= COMMAND_PREPEND_ARGUMENT= COMMAND_REPLACE_ARGUMENT= COMMAND_APPEND_ARGUMENT= COMMAND_URL= COMMAND_BACKGROUND=' -- "$cur"))
+      return
+      ;;
+  esac
+
+  opts='--search -s --home --playlist -p --type -t --channel-playlists --channel-playlist --first -fi --clipboard --history --last --clear-history --dry-run --pass-thru --reverse --select-only --copy-url --open --cookies -c --cookies-from-browser --size -sz --format -f --audio-only -a --background -b --loop -l --hwdec -h --reverse-playlist -r --no-subtitles --subtitle-language --mpv-arg --config --config-path --config-export --config-import --install-bash-completion --set --get --doctor --help -help'
+  if [[ $cur == -* ]]; then
+    COMPREPLY=($(compgen -W "$opts" -- "$cur"))
+  else
+    COMPREPLY=($(compgen -f -- "$cur"))
+  fi
+}
+
+complete -F _play_complete play
+EOF
+
+  block_file=$(mktemp)
+  cat >"$block_file" <<EOF
+
+$marker_begin
+if [ -r "$completion_file" ]; then
+  . "$completion_file"
+fi
+$marker_end
+EOF
+
+  if [[ ! -f $bashrc ]]; then
+    : >"$bashrc"
+  fi
+
+  tmp_bashrc=$(mktemp)
+  awk -v begin="$marker_begin" -v end="$marker_end" '
+    $0 == begin { skip = 1; next }
+    $0 == end { skip = 0; next }
+    !skip { print }
+  ' "$bashrc" >"$tmp_bashrc"
+  mv "$tmp_bashrc" "$bashrc"
+
+  tmp_bashrc=$(mktemp)
+  awk -v block="$block_file" '
+    !inserted && $0 ~ /^[[:space:]]*exec[[:space:]]+zsh([[:space:]]|$)/ {
+      while ((getline line < block) > 0) print line
+      close(block)
+      inserted = 1
+    }
+    { print }
+    END {
+      if (!inserted) {
+        while ((getline line < block) > 0) print line
+        close(block)
+      }
+    }
+  ' "$bashrc" >"$tmp_bashrc"
+  mv "$tmp_bashrc" "$bashrc"
+  rm -f "$block_file"
+
+  if [[ -f $zshrc ]]; then
+    block_file=$(mktemp)
+    cat >"$block_file" <<EOF
+
+$zsh_marker_begin
+autoload -Uz bashcompinit
+bashcompinit
+if [ -r "$completion_file" ]; then
+  . "$completion_file"
+fi
+$zsh_marker_end
+EOF
+
+    tmp_zshrc=$(mktemp)
+    awk -v begin="$zsh_marker_begin" -v end="$zsh_marker_end" '
+      $0 == begin { skip = 1; next }
+      $0 == end { skip = 0; next }
+      !skip { print }
+    ' "$zshrc" >"$tmp_zshrc"
+    mv "$tmp_zshrc" "$zshrc"
+
+    cat "$block_file" >>"$zshrc"
+    rm -f "$block_file"
+    printf 'Updated zsh startup file: %s\n' "$zshrc"
+  fi
+
+  printf 'Installed bash completion: %s\n' "$completion_file"
+  printf 'Updated bash startup file: %s\n' "$bashrc"
+  printf 'Restart your shell, or run: source %q\n' "$completion_file"
+}
+
+SEARCH=false HOME_FEED=false PLAYLIST=false CHANNEL_PLAYLISTS=false FIRST=false CLIPBOARD=false HISTORY=false LAST=false CLEAR_HISTORY=false
 DRY_RUN=false PASS_THRU=false SELECT_ONLY=false COPY_URL=false OPEN_URL=false
 REVERSE_URLS=false
 TYPE= URL= COOKIE_PATH_ARG= COOKIE_BROWSER_ARG= CONFIG_EXPORT= CONFIG_IMPORT= CONFIG_SET= CONFIG_GET=
 POSITIONAL=()
 MPV_EXTRA_ARGS=()
 PLAY_TARGET_TITLES=()
+PLAY_TARGET_TYPES=()
 
 while (($#)); do
   case "$1" in
     -s|--search) SEARCH=true ;;
     --home) HOME_FEED=true ;;
     -p|--playlist) PLAYLIST=true ;;
+    --channel-playlists|--channel-playlist) CHANNEL_PLAYLISTS=true ;;
     --first|-fi) FIRST=true ;;
     -t|--type) TYPE=${2:?missing type}; shift ;;
     --clipboard) CLIPBOARD=true ;;
@@ -150,6 +433,7 @@ while (($#)); do
     --config-path) play_ensure_config; play_config_path; exit ;;
     --config-export) CONFIG_EXPORT=${2:?missing export path}; shift ;;
     --config-import) CONFIG_IMPORT=${2:?missing import path}; shift ;;
+    --install-bash-completion) play_install_bash_completion; exit ;;
     --set) CONFIG_SET=${2:?missing KEY=VALUE}; shift ;;
     --get) CONFIG_GET=${2:?missing KEY}; shift ;;
     --doctor) play_load_config; play_doctor; exit ;;
@@ -166,7 +450,7 @@ play_load_config
 if [[ -n $CONFIG_EXPORT ]]; then play_export_config "$CONFIG_EXPORT"; exit; fi
 if [[ -n $CONFIG_IMPORT ]]; then play_import_config "$CONFIG_IMPORT"; exit; fi
 if [[ -n $CONFIG_SET ]]; then
-  [[ $CONFIG_SET == *=* ]] || { printf '--set requires KEY=VALUE\n' >&2; exit 2; }
+  [[ $CONFIG_SET == *=* ]] || { printf '%s\n' '--set requires KEY=VALUE' >&2; exit 2; }
   play_set_config_value "${CONFIG_SET%%=*}" "${CONFIG_SET#*=}"
   exit
 fi
@@ -231,16 +515,22 @@ if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
   play_has yt-dlp || { printf 'yt-dlp is required for search/home.\n' >&2; exit 1; }
   NORMALIZED_TYPE=
   if [[ -n $TYPE ]]; then NORMALIZED_TYPE=$(play_normalize_type "$TYPE") || { printf 'Invalid type: %s\n' "$TYPE" >&2; exit 2; }; fi
+  if play_bool "$CHANNEL_PLAYLISTS"; then
+    if [[ -n $NORMALIZED_TYPE && $NORMALIZED_TYPE != Channel ]]; then printf '%s\n' '--channel-playlists requires channel search results.' >&2; exit 2; fi
+    NORMALIZED_TYPE=Channel
+  fi
   [[ $NORMALIZED_TYPE == Playlist ]] && PLAYLIST=true
   tmp=$(mktemp)
   play_register_cleanup_file "$tmp"
+  result_batch=${MAX_RESULTS:-10}
+  result_end=$result_batch
   play_section 'Search' >&2
   if play_bool "$HOME_FEED"; then
     play_detail 'Source' 'YouTube home feed' >&2
   else
     play_detail 'Query' "$URL" >&2
   fi
-  play_detail 'Results' "${MAX_RESULTS:-10}" >&2
+  play_detail 'Results' "$result_end" >&2
   if play_bool "$FIRST"; then
     play_detail 'Picker' 'first result' >&2
   else
@@ -257,48 +547,70 @@ if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
     play_detail 'Type' 'Playlist' >&2
   fi
   play_log step 'Fetching results.' >&2
-  play_search_youtube "$URL" "$HOME_FEED" "$PLAYLIST" "${MAX_RESULTS:-10}" "$COOKIE_PATH_EFFECTIVE" "$NORMALIZED_TYPE" "$COOKIE_BROWSER_EFFECTIVE" >"$tmp"
+  play_search_youtube "$URL" "$HOME_FEED" "$PLAYLIST" "$result_end" "$COOKIE_PATH_EFFECTIVE" "$NORMALIZED_TYPE" "$COOKIE_BROWSER_EFFECTIVE" >"$tmp"
   if [[ ! -s $tmp ]]; then play_unregister_cleanup_file "$tmp"; printf 'No results found.\n' >&2; rm -f "$tmp"; exit 1; fi
-  if play_bool "$FIRST"; then selected=$(sed -n '1p' "$tmp"); else selected=$(play_pick_result 'Search Results' "$tmp" true) || { play_unregister_cleanup_file "$tmp"; rm -f "$tmp"; exit 1; }; fi
+  if play_bool "$FIRST"; then
+    selected=$(sed -n '1p' "$tmp")
+  elif play_bool "$CHANNEL_PLAYLISTS" && selected=$(play_select_exact_channel_row "$(<"$tmp")" "$URL"); then
+    play_detail 'Picker' 'exact channel match' >&2
+    play_log ok 'Selected exact channel match.' >&2
+  else
+    state_file=$(mktemp)
+    play_register_cleanup_file "$state_file"
+    printf '%s\n' "$result_end" >"$state_file"
+    more_cmd=$(play_make_more_results_command search "$tmp" "$state_file" "$result_batch" "$URL")
+    selected=$(play_pick_result 'Search Results' "$tmp" true true "$more_cmd") || { play_unregister_cleanup_file "$tmp"; play_unregister_cleanup_file "$state_file"; rm -f "$tmp" "$state_file"; exit 1; }
+    play_unregister_cleanup_file "$state_file"
+    rm -f "$state_file"
+  fi
   play_unregister_cleanup_file "$tmp"
   rm -f "$tmp"
   play_apply_selected_rows "$selected" || exit 1
   play_show_selected
-  if [[ $PLAY_HISTORY_TYPE == ChannelPlaylists ]]; then
-    tmp=$(mktemp)
-    play_register_cleanup_file "$tmp"
-    play_section 'Channel Playlists' >&2
-    play_detail 'Channel' "$PLAY_HISTORY_TITLE" >&2
-    play_log step 'Fetching playlists.' >&2
-    play_search_channel_playlists "$PLAY_TARGET_URL" "${MAX_RESULTS:-10}" "$COOKIE_PATH_EFFECTIVE" "$COOKIE_BROWSER_EFFECTIVE" "${PLAY_HISTORY_SOURCE:-$PLAY_HISTORY_TITLE}" >"$tmp"
-    if [[ ! -s $tmp ]]; then play_unregister_cleanup_file "$tmp"; printf 'No playlists found.\n' >&2; rm -f "$tmp"; exit 1; fi
-    selected=$(play_pick_result 'Channel Playlists' "$tmp" true) || { play_unregister_cleanup_file "$tmp"; rm -f "$tmp"; exit 1; }
-    play_unregister_cleanup_file "$tmp"
-    rm -f "$tmp"
-    play_apply_selected_rows "$selected" || exit 1
+  if play_bool "$CHANNEL_PLAYLISTS" && [[ $PLAY_HISTORY_TYPE != Channel ]]; then
+    printf '%s\n' '--channel-playlists requires selecting a channel.' >&2
+    exit 2
+  fi
+  if [[ $PLAY_HISTORY_TYPE == ChannelPlaylists ]] || { [[ $PLAY_HISTORY_TYPE == Channel ]] && play_bool "$CHANNEL_PLAYLISTS"; }; then
+    play_pick_channel_playlists "$PLAY_TARGET_URL" "$PLAY_HISTORY_TITLE" "${PLAY_HISTORY_SOURCE:-$PLAY_HISTORY_TITLE}" || exit 1
+    if play_bool "$REVERSE_URLS"; then
+      play_reverse_targets
+      REVERSE_URLS=false
+    fi
     play_show_selected
   fi
 else
-  if ((${#POSITIONAL[@]} > 0)) && ! play_bool "$CLIPBOARD" && ! play_bool "$LAST" && ! play_bool "$HISTORY"; then
-    PLAY_TARGET_URLS=("${POSITIONAL[@]}")
+  if play_bool "$CHANNEL_PLAYLISTS"; then
+    play_has yt-dlp || { printf 'yt-dlp is required for --channel-playlists.\n' >&2; exit 1; }
+    if ! play_is_url "$URL"; then printf '%s\n' '--channel-playlists requires a channel URL, or use it with --search.' >&2; exit 2; fi
+    play_pick_channel_playlists "$URL" "$URL" "$URL" || exit 1
+    if play_bool "$REVERSE_URLS"; then
+      play_reverse_targets
+      REVERSE_URLS=false
+    fi
+    play_show_selected
   else
-    PLAY_TARGET_URLS=("$URL")
+    if ((${#POSITIONAL[@]} > 0)) && ! play_bool "$CLIPBOARD" && ! play_bool "$LAST" && ! play_bool "$HISTORY"; then
+      PLAY_TARGET_URLS=("${POSITIONAL[@]}")
+    else
+      PLAY_TARGET_URLS=("$URL")
+    fi
+    PLAY_TARGET_TITLES=("${PLAY_TARGET_URLS[@]}")
+    PLAY_TARGET_TYPES=()
+    for target_url in "${PLAY_TARGET_URLS[@]}"; do PLAY_TARGET_TYPES+=(Direct); done
+    if ((${#PLAY_TARGET_TITLES[@]} == 1)); then PLAY_TARGET_TITLES=("$PLAY_HISTORY_TITLE"); fi
+    for target_url in "${PLAY_TARGET_URLS[@]}"; do
+      if ! play_is_url "$target_url"; then printf 'Invalid URL. Use http:// or https://, or add --search.\n' >&2; exit 2; fi
+    done
+    PLAY_TARGET_URL=${PLAY_TARGET_URLS[0]}
   fi
-  PLAY_TARGET_TITLES=("${PLAY_TARGET_URLS[@]}")
-  if ((${#PLAY_TARGET_TITLES[@]} == 1)); then PLAY_TARGET_TITLES=("$PLAY_HISTORY_TITLE"); fi
-  if play_bool "$REVERSE_URLS"; then
-    reversed=()
-    reversed_titles=()
-    for ((i = ${#PLAY_TARGET_URLS[@]} - 1; i >= 0; i--)); do reversed+=("${PLAY_TARGET_URLS[i]}"); done
-    for ((i = ${#PLAY_TARGET_TITLES[@]} - 1; i >= 0; i--)); do reversed_titles+=("${PLAY_TARGET_TITLES[i]}"); done
-    PLAY_TARGET_URLS=("${reversed[@]}")
-    PLAY_TARGET_TITLES=("${reversed_titles[@]}")
-  fi
-  for target_url in "${PLAY_TARGET_URLS[@]}"; do
-    if ! play_is_url "$target_url"; then printf 'Invalid URL. Use http:// or https://, or add --search.\n' >&2; exit 2; fi
-  done
-  PLAY_TARGET_URL=${PLAY_TARGET_URLS[0]}
 fi
+
+if play_bool "$REVERSE_URLS"; then
+  play_reverse_targets
+fi
+
+play_expand_reversed_playlist_targets
 
 for i in "${!PLAY_TARGET_URLS[@]}"; do
   PLAY_TARGET_URLS[i]=$(play_normalize_url "${PLAY_TARGET_URLS[i]}")

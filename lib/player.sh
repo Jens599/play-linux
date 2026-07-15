@@ -131,17 +131,18 @@ play_start_mpv_ipc() {
   if ((${#PLAY_TARGET_URLS[@]} > 1)); then
     local playlist_file
     playlist_file=$(mktemp)
+    play_register_cleanup_file "$playlist_file"
     play_write_mpv_playlist "$playlist_file"
     if ! play_send_mpv_loadlist "$socket" "$playlist_file"; then
-      rm -f "$playlist_file"
       play_log warn 'Failed to send playlist to mpv IPC socket.'
       play_unregister_cleanup_pid "$process_pid"
+      play_unregister_cleanup_file "$playlist_file"
       play_unregister_cleanup_file "$socket"
       kill "$process_pid" >/dev/null 2>&1 || true
+      rm -f "$playlist_file"
       rm -f "$socket"
       return 1
     fi
-    rm -f "$playlist_file"
     disown "$process_pid" >/dev/null 2>&1 || true
     play_unregister_cleanup_pid "$process_pid"
     play_unregister_cleanup_file "$socket"

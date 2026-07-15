@@ -40,6 +40,26 @@ assert_contains "$selected" $'Direct\thttps://example.test/video\thttps://exampl
 escaped_selected=$($ROOT/bin/play 'https://example.test/watch\?v=abc\&list=PL123' --select-only)
 assert_contains "$escaped_selected" $'Direct\thttps://example.test/watch\\?v=abc\\&list=PL123\thttps://example.test/watch?v=abc&list=PL123'
 
+invalid_playlist_results=$(($ROOT/bin/play 'https://example.test/video' --playlist-results nope --select-only) 2>&1) && { printf 'Expected invalid --playlist-results to fail.\n' >&2; exit 1; }
+assert_contains "$invalid_playlist_results" '--playlist-results requires a positive integer.'
+
+fake_bin=$(mktemp -d)
+cat >"$fake_bin/yt-dlp" <<'EOF'
+#!/usr/bin/env bash
+args=" $* "
+[[ $args == *' --playlist-items 1:3 '* ]] || exit 2
+printf 'Playlist Three\tPL3\tYoutubeTab\thttps://www.youtube.com/playlist?list=PL3\tNA\tChannel\tUploader\tNA\tView full playlist\tNA\t3\tNA\n'
+EOF
+cat >"$fake_bin/fzf" <<'EOF'
+#!/usr/bin/env bash
+IFS= read -r line || exit 1
+printf '\n%s\n' "$line"
+EOF
+chmod +x "$fake_bin/yt-dlp" "$fake_bin/fzf"
+playlist_selected=$(PATH="$fake_bin:$PATH" MENU_PROVIDER=fzf $ROOT/bin/play 'https://www.youtube.com/channel/example' --channel-playlists --playlist-results 3 --select-only 2>/dev/null)
+assert_contains "$playlist_selected" $'Playlist\tPlaylist Three\thttps://www.youtube.com/playlist?list=PL3'
+rm -rf "$fake_bin"
+
 completion_home=$(mktemp -d)
 printf 'if command -v zsh >/dev/null 2>&1; then\n  exec zsh -l\nfi\n' >"$completion_home/.bashrc"
 printf 'compinit\n' >"$completion_home/.zshrc"

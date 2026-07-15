@@ -70,12 +70,52 @@ Playback:
 EOF
 }
 
+play_apply_selected_rows() {
+  local rows=$1 row
+  local type title url duration source views count
+  PLAY_TARGET_URLS=()
+  PLAY_TARGET_TITLES=()
+
+  while IFS= read -r row; do
+    [[ -z $row ]] && continue
+    IFS=$'\t' read -r type title url duration source views count <<<"$row"
+    if ((${#PLAY_TARGET_URLS[@]} == 0)); then
+      PLAY_HISTORY_TYPE=$type
+      PLAY_HISTORY_TITLE=$title
+      PLAY_TARGET_URL=$url
+      PLAY_HISTORY_DURATION=$duration
+      PLAY_HISTORY_SOURCE=$source
+      PLAY_HISTORY_VIEWS=$views
+      PLAY_HISTORY_COUNT=$count
+    fi
+    PLAY_TARGET_URLS+=("$url")
+    PLAY_TARGET_TITLES+=("$title")
+  done <<<"$rows"
+
+  ((${#PLAY_TARGET_URLS[@]} > 0))
+}
+
+play_show_selected() {
+  play_section 'Selected' >&2
+  play_detail 'Title' "$PLAY_HISTORY_TITLE" >&2
+  play_detail 'Type' "$PLAY_HISTORY_TYPE" >&2
+  [[ -n ${PLAY_HISTORY_SOURCE:-} && ${PLAY_HISTORY_SOURCE:-} != NA ]] && play_detail 'Source' "$PLAY_HISTORY_SOURCE" >&2
+  [[ -n ${PLAY_HISTORY_DURATION:-} && ${PLAY_HISTORY_DURATION:-} != NA ]] && play_detail 'Duration' "$PLAY_HISTORY_DURATION" >&2
+  [[ -n ${PLAY_HISTORY_VIEWS:-} && ${PLAY_HISTORY_VIEWS:-} != NA ]] && play_detail 'Views' "$PLAY_HISTORY_VIEWS" >&2
+  [[ -n ${PLAY_HISTORY_COUNT:-} && ${PLAY_HISTORY_COUNT:-} != NA ]] && play_detail 'Items' "$PLAY_HISTORY_COUNT" >&2
+  play_detail 'URL' "$PLAY_TARGET_URL" >&2
+  if ((${#PLAY_TARGET_URLS[@]} > 1)); then
+    play_detail 'Count' "${#PLAY_TARGET_URLS[@]}" >&2
+  fi
+}
+
 SEARCH=false HOME_FEED=false PLAYLIST=false FIRST=false CLIPBOARD=false HISTORY=false LAST=false CLEAR_HISTORY=false
 DRY_RUN=false PASS_THRU=false SELECT_ONLY=false COPY_URL=false OPEN_URL=false
 REVERSE_URLS=false
 TYPE= URL= COOKIE_PATH_ARG= COOKIE_BROWSER_ARG= CONFIG_EXPORT= CONFIG_IMPORT= CONFIG_SET= CONFIG_GET=
 POSITIONAL=()
 MPV_EXTRA_ARGS=()
+PLAY_TARGET_TITLES=()
 
 while (($#)); do
   case "$1" in
@@ -219,18 +259,11 @@ if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
   play_log step 'Fetching results.' >&2
   play_search_youtube "$URL" "$HOME_FEED" "$PLAYLIST" "${MAX_RESULTS:-10}" "$COOKIE_PATH_EFFECTIVE" "$NORMALIZED_TYPE" "$COOKIE_BROWSER_EFFECTIVE" >"$tmp"
   if [[ ! -s $tmp ]]; then play_unregister_cleanup_file "$tmp"; printf 'No results found.\n' >&2; rm -f "$tmp"; exit 1; fi
-  if play_bool "$FIRST"; then selected=$(sed -n '1p' "$tmp"); else selected=$(play_pick_result 'Search Results' "$tmp") || { play_unregister_cleanup_file "$tmp"; rm -f "$tmp"; exit 1; }; fi
+  if play_bool "$FIRST"; then selected=$(sed -n '1p' "$tmp"); else selected=$(play_pick_result 'Search Results' "$tmp" true) || { play_unregister_cleanup_file "$tmp"; rm -f "$tmp"; exit 1; }; fi
   play_unregister_cleanup_file "$tmp"
   rm -f "$tmp"
-  IFS=$'\t' read -r PLAY_HISTORY_TYPE PLAY_HISTORY_TITLE PLAY_TARGET_URL PLAY_HISTORY_DURATION PLAY_HISTORY_SOURCE PLAY_HISTORY_VIEWS PLAY_HISTORY_COUNT <<<"$selected"
-  play_section 'Selected' >&2
-  play_detail 'Title' "$PLAY_HISTORY_TITLE" >&2
-  play_detail 'Type' "$PLAY_HISTORY_TYPE" >&2
-  [[ -n ${PLAY_HISTORY_SOURCE:-} && ${PLAY_HISTORY_SOURCE:-} != NA ]] && play_detail 'Source' "$PLAY_HISTORY_SOURCE" >&2
-  [[ -n ${PLAY_HISTORY_DURATION:-} && ${PLAY_HISTORY_DURATION:-} != NA ]] && play_detail 'Duration' "$PLAY_HISTORY_DURATION" >&2
-  [[ -n ${PLAY_HISTORY_VIEWS:-} && ${PLAY_HISTORY_VIEWS:-} != NA ]] && play_detail 'Views' "$PLAY_HISTORY_VIEWS" >&2
-  [[ -n ${PLAY_HISTORY_COUNT:-} && ${PLAY_HISTORY_COUNT:-} != NA ]] && play_detail 'Items' "$PLAY_HISTORY_COUNT" >&2
-  play_detail 'URL' "$PLAY_TARGET_URL" >&2
+  play_apply_selected_rows "$selected" || exit 1
+  play_show_selected
   if [[ $PLAY_HISTORY_TYPE == ChannelPlaylists ]]; then
     tmp=$(mktemp)
     play_register_cleanup_file "$tmp"
@@ -239,30 +272,27 @@ if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
     play_log step 'Fetching playlists.' >&2
     play_search_channel_playlists "$PLAY_TARGET_URL" "${MAX_RESULTS:-10}" "$COOKIE_PATH_EFFECTIVE" "$COOKIE_BROWSER_EFFECTIVE" "${PLAY_HISTORY_SOURCE:-$PLAY_HISTORY_TITLE}" >"$tmp"
     if [[ ! -s $tmp ]]; then play_unregister_cleanup_file "$tmp"; printf 'No playlists found.\n' >&2; rm -f "$tmp"; exit 1; fi
-    selected=$(play_pick_result 'Channel Playlists' "$tmp") || { play_unregister_cleanup_file "$tmp"; rm -f "$tmp"; exit 1; }
+    selected=$(play_pick_result 'Channel Playlists' "$tmp" true) || { play_unregister_cleanup_file "$tmp"; rm -f "$tmp"; exit 1; }
     play_unregister_cleanup_file "$tmp"
     rm -f "$tmp"
-    IFS=$'\t' read -r PLAY_HISTORY_TYPE PLAY_HISTORY_TITLE PLAY_TARGET_URL PLAY_HISTORY_DURATION PLAY_HISTORY_SOURCE PLAY_HISTORY_VIEWS PLAY_HISTORY_COUNT <<<"$selected"
-    play_section 'Selected' >&2
-    play_detail 'Title' "$PLAY_HISTORY_TITLE" >&2
-    play_detail 'Type' "$PLAY_HISTORY_TYPE" >&2
-    [[ -n ${PLAY_HISTORY_SOURCE:-} && ${PLAY_HISTORY_SOURCE:-} != NA ]] && play_detail 'Source' "$PLAY_HISTORY_SOURCE" >&2
-    [[ -n ${PLAY_HISTORY_DURATION:-} && ${PLAY_HISTORY_DURATION:-} != NA ]] && play_detail 'Duration' "$PLAY_HISTORY_DURATION" >&2
-    [[ -n ${PLAY_HISTORY_VIEWS:-} && ${PLAY_HISTORY_VIEWS:-} != NA ]] && play_detail 'Views' "$PLAY_HISTORY_VIEWS" >&2
-    [[ -n ${PLAY_HISTORY_COUNT:-} && ${PLAY_HISTORY_COUNT:-} != NA ]] && play_detail 'Items' "$PLAY_HISTORY_COUNT" >&2
-    play_detail 'URL' "$PLAY_TARGET_URL" >&2
+    play_apply_selected_rows "$selected" || exit 1
+    play_show_selected
   fi
-  PLAY_TARGET_URLS=("$PLAY_TARGET_URL")
 else
   if ((${#POSITIONAL[@]} > 0)) && ! play_bool "$CLIPBOARD" && ! play_bool "$LAST" && ! play_bool "$HISTORY"; then
     PLAY_TARGET_URLS=("${POSITIONAL[@]}")
   else
     PLAY_TARGET_URLS=("$URL")
   fi
+  PLAY_TARGET_TITLES=("${PLAY_TARGET_URLS[@]}")
+  if ((${#PLAY_TARGET_TITLES[@]} == 1)); then PLAY_TARGET_TITLES=("$PLAY_HISTORY_TITLE"); fi
   if play_bool "$REVERSE_URLS"; then
     reversed=()
+    reversed_titles=()
     for ((i = ${#PLAY_TARGET_URLS[@]} - 1; i >= 0; i--)); do reversed+=("${PLAY_TARGET_URLS[i]}"); done
+    for ((i = ${#PLAY_TARGET_TITLES[@]} - 1; i >= 0; i--)); do reversed_titles+=("${PLAY_TARGET_TITLES[i]}"); done
     PLAY_TARGET_URLS=("${reversed[@]}")
+    PLAY_TARGET_TITLES=("${reversed_titles[@]}")
   fi
   for target_url in "${PLAY_TARGET_URLS[@]}"; do
     if ! play_is_url "$target_url"; then printf 'Invalid URL. Use http:// or https://, or add --search.\n' >&2; exit 2; fi

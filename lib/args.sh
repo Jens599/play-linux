@@ -80,6 +80,10 @@ play_ytdl_format_expression() {
   [[ -n $effective_codec ]] && filters+="[$effective_codec]"
   [[ -n $effective_height ]] && filters+="[height<=$effective_height]"
   [[ -n $effective_fps ]] && filters+="[fps<=$effective_fps]"
+  if [[ $video_value == best ]]; then
+    printf '%s%s\n' "$video_value" "$filters"
+    return
+  fi
   local video_format="${video_value}${filters}+${audio_value}"
   if [[ -z $fallback_value ]]; then
     printf '%s\n' "$video_format"

@@ -35,7 +35,7 @@ play_enabled_command_value() {
 
 play_ytdl_format_expression() {
   local format=$1 hardware=$2 video=${3:-bestvideo} codec=${4:-auto} height=${5:-from_quality} fps=${6:-30} audio=${7:-bestaudio} fallback=${8:-best}
-  local video_value audio_value fallback_value effective_height= effective_fps= effective_codec filters= fallback_filters= height_fallback= fps_fallback=
+  local video_value audio_value fallback_value effective_height='' effective_fps='' effective_codec filters='' fallback_filters='' height_fallback='' fps_fallback=''
 
   if play_is_auto_format "$video"; then video_value=bestvideo; else video_value=$video; fi
   if play_is_auto_format "$audio"; then audio_value=bestaudio; else audio_value=$audio; fi
@@ -101,7 +101,7 @@ play_ytdl_format_expression() {
 
 play_build_mpv_args() {
   PLAY_MPV_ARGS=()
-  local geometry= autofit= format_expr ytdl_raw_options=()
+  local geometry='' autofit='' format_expr ytdl_raw_options=()
   if play_enabled_command_value "${COMMAND_TERMINAL:-auto}" "$([[ ${BACKGROUND_EFFECTIVE:-false} == true ]] && printf false || printf true)"; then
     PLAY_MPV_ARGS+=(--terminal=yes)
   fi
@@ -148,6 +148,7 @@ play_build_mpv_args() {
   fi
 
   format_expr=$(play_ytdl_format_expression "${YTDL_FORMAT_EFFECTIVE:-${YTDL_FORMAT:-480p}}" "${HARDWARE_ACCEL_EFFECTIVE:-false}" "${YTDL_VIDEO_SELECTOR:-bestvideo}" "${YTDL_VIDEO_CODEC_FILTER:-auto}" "${YTDL_MAX_HEIGHT:-from_quality}" "${YTDL_MAX_FPS:-30}" "${YTDL_AUDIO_SELECTOR:-bestaudio}" "${YTDL_FALLBACK_SELECTOR:-best}")
+  # shellcheck disable=SC2034
   PLAY_YTDL_FORMAT_EXPR=$format_expr
   PLAY_MPV_ARGS+=("--ytdl-format=$format_expr")
   [[ -n ${COOKIE_PATH_EFFECTIVE:-} ]] && ytdl_raw_options+=("cookies=${COOKIE_PATH_EFFECTIVE}")
@@ -166,9 +167,11 @@ play_build_mpv_args() {
 }
 
 play_apply_command_overrides() {
+  # shellcheck disable=SC2034
   PLAY_PLAYER=${COMMAND_PLAYER:-${PLAYER:-mpv}}
   PLAY_TARGET_URL=${COMMAND_URL:-$PLAY_TARGET_URL}
   if [[ -n ${COMMAND_URL:-} ]]; then
+    # shellcheck disable=SC2034
     PLAY_TARGET_URLS=("$COMMAND_URL")
   fi
   if [[ -n ${COMMAND_BACKGROUND:-} ]]; then BACKGROUND_EFFECTIVE=$COMMAND_BACKGROUND; fi

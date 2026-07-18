@@ -13,5 +13,10 @@ play_doctor() {
     fi
   done
   printf '  Config   %s\n' "$(play_config_path)"
+  if play_validate_config_file "$(play_config_path)" >/dev/null 2>&1; then
+    printf '  %s %-12s safe\n' "$(play_color 32 OK)" config
+  else
+    printf '  %s %-12s unsafe\n' "$(play_color 31 Missing)" config
+  fi
   printf '  History  %s\n' "$(play_history_path)"
 }

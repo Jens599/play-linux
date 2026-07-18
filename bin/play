@@ -9,18 +9,28 @@ while [[ -L $PLAY_SOURCE ]]; do
 done
 PLAY_ROOT=$(cd -P "$(dirname "$PLAY_SOURCE")/.." && pwd)
 # shellcheck source=../lib/config.sh
+# shellcheck disable=SC1091
 source "$PLAY_ROOT/lib/config.sh"
+# shellcheck disable=SC1091
 source "$PLAY_ROOT/lib/utils.sh"
+# shellcheck disable=SC1091
 source "$PLAY_ROOT/lib/args.sh"
+# shellcheck disable=SC1091
 source "$PLAY_ROOT/lib/search.sh"
+# shellcheck disable=SC1091
 source "$PLAY_ROOT/lib/picker.sh"
+# shellcheck disable=SC1091
 source "$PLAY_ROOT/lib/history.sh"
+# shellcheck disable=SC1091
 source "$PLAY_ROOT/lib/clipboard.sh"
+# shellcheck disable=SC1091
 source "$PLAY_ROOT/lib/doctor.sh"
+# shellcheck disable=SC1091
 source "$PLAY_ROOT/lib/player.sh"
 
 PLAY_CLEANUP_FILES=()
 PLAY_CLEANUP_PIDS=()
+PLAY_ORIGINAL_ARGS=("$@")
 trap play_interrupt INT TERM
 
 play_usage() {
@@ -46,6 +56,8 @@ Options:
   --select-only                    Print selected item as TSV
   --dry-run                        Print command without starting player
   --pass-thru                      With --dry-run, print machine-readable fields
+  --debug                          Write a debug log under state directory
+  --debug-log PATH                 Write a debug log to PATH
   --reverse                        Reverse selected URL/order targets
   --clear-history                  Clear history
   --config                         Open config in $EDITOR
@@ -71,6 +83,95 @@ Playback:
   --subtitle-language en,ja        Preferred subtitle language(s)
   --mpv-arg ARG                    Append custom mpv argument
 EOF
+}
+
+play_option_hint() {
+  case "$1" in
+    -f|--format) printf '%s\n' 'Example: play -s "backlogs" -t channel --format 720p' ;;
+    -t|--type) printf '%s\n' 'Example: play -s "backlogs" --type channel' ;;
+    --playlist-results) printf '%s\n' 'Example: play --channel-playlists --playlist-results 25 URL' ;;
+    --size|-sz) printf '%s\n' 'Example: play URL --size small' ;;
+    --cookies|-c) printf '%s\n' 'Example: play URL --cookies ~/cookies.txt' ;;
+    --cookies-from-browser) printf '%s\n' 'Example: play URL --cookies-from-browser firefox' ;;
+    --subtitle-language) printf '%s\n' 'Example: play URL --subtitle-language en,ja' ;;
+    --mpv-arg) printf '%s\n' 'Example: play URL --mpv-arg --speed=1.25' ;;
+    --config-export) printf '%s\n' 'Example: play --config-export ./play.conf' ;;
+    --config-import) printf '%s\n' 'Example: play --config-import ./play.conf' ;;
+    --set) printf '%s\n' 'Example: play --set YTDL_FORMAT=720p' ;;
+    --get) printf '%s\n' 'Example: play --get YTDL_FORMAT' ;;
+    *) printf '%s\n' 'Run play --help to see valid options.' ;;
+  esac
+}
+
+play_error() {
+  printf 'Error: %s\n' "$1" >&2
+}
+
+play_hint() {
+  printf 'Hint: %s\n' "$1" >&2
+}
+
+play_missing_option_value() {
+  local option=$1 value_name=$2
+  play_error "$option requires $value_name."
+  play_hint "$(play_option_hint "$option")"
+  printf 'Try: play --help\n' >&2
+  exit 2
+}
+
+play_require_option_value() {
+  local option=$1 value_name=$2 value=${3:-} allow_dash=${4:-false}
+  if [[ -z $value ]]; then
+    play_missing_option_value "$option" "$value_name"
+  fi
+  if [[ $allow_dash != true && $value == -* ]]; then
+    play_missing_option_value "$option" "$value_name"
+  fi
+}
+
+play_invalid_value() {
+  local label=$1 value=$2 expected=$3 hint=${4:-}
+  play_error "$label has invalid value: $value"
+  play_hint "Expected: $expected"
+  [[ -n $hint ]] && play_hint "$hint"
+  exit 2
+}
+
+play_is_bool_value() {
+  case "${1,,}" in
+    true|t|yes|y|1|on|false|f|no|n|0|off) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+play_is_none_or_auto_value() {
+  play_is_none "$1" || play_is_auto_format "$1"
+}
+
+play_validate_effective_settings() {
+  case "${SIZE_EFFECTIVE,,}" in
+    pip|small|medium|max) ;;
+    *) play_invalid_value 'size' "$SIZE_EFFECTIVE" 'pip, small, medium, or max' 'Example: play URL --size small' ;;
+  esac
+
+  case "${YTDL_FORMAT_EFFECTIVE,,}" in
+    480p|720p|1080p|best|audio) ;;
+    *) play_invalid_value 'format' "$YTDL_FORMAT_EFFECTIVE" '480p, 720p, 1080p, best, or audio' 'Example: play URL --format 720p' ;;
+  esac
+
+  local bool_name bool_value
+  for bool_name in AUDIO_ONLY_EFFECTIVE BACKGROUND_EFFECTIVE LOOP_EFFECTIVE HARDWARE_ACCEL_EFFECTIVE REVERSE_PLAYLIST_EFFECTIVE NO_SUBTITLES_EFFECTIVE; do
+    bool_value=${!bool_name}
+    play_is_bool_value "$bool_value" || play_invalid_value "$bool_name" "$bool_value" 'true or false'
+  done
+  for bool_name in REMEMBER_PLAYBACK_SPEED YTDL_NO_DOWNLOAD_ARCHIVE; do
+    bool_value=${!bool_name:-true}
+    play_is_bool_value "$bool_value" || play_invalid_value "$bool_name" "$bool_value" 'true or false'
+  done
+
+  [[ ${MAX_RESULTS:-10} =~ ^[1-9][0-9]*$ ]] || play_invalid_value 'MAX_RESULTS' "${MAX_RESULTS:-}" 'a positive integer'
+  [[ ${YTDL_MAX_FPS:-30} =~ ^[0-9]+$ ]] || play_is_none_or_auto_value "${YTDL_MAX_FPS:-30}" || play_invalid_value 'YTDL_MAX_FPS' "${YTDL_MAX_FPS:-}" 'a number, auto, or none'
+  [[ ${YTDL_MAX_HEIGHT:-from_quality} =~ ^[0-9]+$ ]] || play_is_none_or_auto_value "${YTDL_MAX_HEIGHT:-from_quality}" || play_invalid_value 'YTDL_MAX_HEIGHT' "${YTDL_MAX_HEIGHT:-}" 'a number, from_quality, auto, or none'
 }
 
 play_apply_selected_rows() {
@@ -184,7 +285,7 @@ play_select_exact_channel_row() {
   while IFS= read -r row; do
     [[ -z $row ]] && continue
     IFS=$'\t' read -r type title url duration source views count <<<"$row"
-    if [[ $type == Channel && ( ${title,,} == ${query,,} || ${source,,} == ${query,,} ) ]]; then
+    if [[ $type == Channel && ( ${title,,} == "${query,,}" || ${source,,} == "${query,,}" ) ]]; then
       if [[ -n $match ]]; then return 1; fi
       match=$row
     fi
@@ -291,7 +392,7 @@ _play_complete() {
       COMPREPLY=($(compgen -W '480p 720p 1080p best audio' -- "$cur"))
       return
       ;;
-    --cookies|--config-export|--config-import)
+    --cookies|--config-export|--config-import|--debug-log)
       COMPREPLY=($(compgen -f -- "$cur"))
       return
       ;;
@@ -313,7 +414,7 @@ _play_complete() {
       ;;
   esac
 
-  opts='--search -s --home --playlist -p --type -t --channel-playlists --channel-playlist --playlist-results --first -fi --clipboard --history --last --clear-history --dry-run --pass-thru --reverse --select-only --copy-url --open --cookies -c --cookies-from-browser --size -sz --format -f --audio-only -a --background -b --loop -l --hwdec -h --reverse-playlist -r --no-subtitles --subtitle-language --mpv-arg --config --config-path --config-export --config-import --install-bash-completion --set --get --doctor --help -help'
+  opts='--search -s --home --playlist -p --type -t --channel-playlists --channel-playlist --playlist-results --first -fi --clipboard --history --last --clear-history --dry-run --pass-thru --debug --debug-log --reverse --select-only --copy-url --open --cookies -c --cookies-from-browser --size -sz --format -f --audio-only -a --background -b --loop -l --hwdec -h --reverse-playlist -r --no-subtitles --subtitle-language --mpv-arg --config --config-path --config-export --config-import --install-bash-completion --set --get --doctor --help -help'
   if [[ $cur == -* ]]; then
     COMPREPLY=($(compgen -W "$opts" -- "$cur"))
   else
@@ -396,9 +497,11 @@ EOF
 }
 
 SEARCH=false HOME_FEED=false PLAYLIST=false CHANNEL_PLAYLISTS=false FIRST=false CLIPBOARD=false HISTORY=false LAST=false CLEAR_HISTORY=false
+DOCTOR=false
 DRY_RUN=false PASS_THRU=false SELECT_ONLY=false COPY_URL=false OPEN_URL=false
 REVERSE_URLS=false
-TYPE= URL= COOKIE_PATH_ARG= COOKIE_BROWSER_ARG= CONFIG_EXPORT= CONFIG_IMPORT= CONFIG_SET= CONFIG_GET= PLAYLIST_RESULTS_ARG=
+DEBUG_REQUESTED=false
+TYPE='' URL='' COOKIE_PATH_ARG='' COOKIE_BROWSER_ARG='' CONFIG_EXPORT='' CONFIG_IMPORT='' CONFIG_SET='' CONFIG_GET='' PLAYLIST_RESULTS_ARG='' DEBUG_LOG_PATH_ARG=''
 POSITIONAL=()
 MPV_EXTRA_ARGS=()
 PLAY_TARGET_TITLES=()
@@ -410,39 +513,41 @@ while (($#)); do
     --home) HOME_FEED=true ;;
     -p|--playlist) PLAYLIST=true ;;
     --channel-playlists|--channel-playlist) CHANNEL_PLAYLISTS=true ;;
-    --playlist-results) PLAYLIST_RESULTS_ARG=${2:?missing playlist results count}; shift ;;
+    --playlist-results) play_require_option_value "$1" 'a positive integer' "${2-}"; PLAYLIST_RESULTS_ARG=$2; shift ;;
     --first|-fi) FIRST=true ;;
-    -t|--type) TYPE=${2:?missing type}; shift ;;
+    -t|--type) play_require_option_value "$1" 'video, playlist, or channel' "${2-}"; TYPE=$2; shift ;;
     --clipboard) CLIPBOARD=true ;;
     --history) HISTORY=true ;;
     --last) LAST=true ;;
     --clear-history) CLEAR_HISTORY=true ;;
     --dry-run) DRY_RUN=true ;;
     --pass-thru) PASS_THRU=true ;;
+    --debug) DEBUG_REQUESTED=true ;;
+    --debug-log) play_require_option_value "$1" 'a log file path' "${2-}"; DEBUG_REQUESTED=true; DEBUG_LOG_PATH_ARG=$2; shift ;;
     --reverse) REVERSE_URLS=true ;;
     --select-only) SELECT_ONLY=true ;;
     --copy-url) COPY_URL=true ;;
     --open) OPEN_URL=true ;;
-    --cookies|-c) COOKIE_PATH_ARG=${2:?missing cookie path}; shift ;;
-    --cookies-from-browser) COOKIE_BROWSER_ARG=${2:?missing browser}; shift ;;
-    --size|-sz) SIZE_EFFECTIVE=${2:?missing size}; shift ;;
-    -f|--format) YTDL_FORMAT_EFFECTIVE=${2:?missing format}; shift ;;
+    --cookies|-c) play_require_option_value "$1" 'a cookie file path' "${2-}"; COOKIE_PATH_ARG=$2; shift ;;
+    --cookies-from-browser) play_require_option_value "$1" 'a browser name' "${2-}"; COOKIE_BROWSER_ARG=$2; shift ;;
+    --size|-sz) play_require_option_value "$1" 'pip, small, medium, or max' "${2-}"; SIZE_EFFECTIVE=$2; shift ;;
+    -f|--format) play_require_option_value "$1" 'a format such as 480p, 720p, 1080p, best, or audio' "${2-}"; YTDL_FORMAT_EFFECTIVE=$2; shift ;;
     --audio-only|-a) AUDIO_ONLY_EFFECTIVE=true ;;
     --background|-b) BACKGROUND_EFFECTIVE=true ;;
     --loop|-l) LOOP_EFFECTIVE=true ;;
     --hwdec|-h) HARDWARE_ACCEL_EFFECTIVE=true ;;
     --reverse-playlist|-r) REVERSE_PLAYLIST_EFFECTIVE=true ;;
     --no-subtitles) NO_SUBTITLES_EFFECTIVE=true ;;
-    --subtitle-language) SUBTITLE_LANGUAGE_EFFECTIVE=${2:?missing subtitle language}; shift ;;
-    --mpv-arg) MPV_EXTRA_ARGS+=("${2:?missing mpv argument}"); shift ;;
+    --subtitle-language) play_require_option_value "$1" 'a subtitle language list' "${2-}"; SUBTITLE_LANGUAGE_EFFECTIVE=$2; shift ;;
+    --mpv-arg) play_require_option_value "$1" 'an mpv argument' "${2-}" true; MPV_EXTRA_ARGS+=("$2"); shift ;;
     --config) play_open_config; exit ;;
     --config-path) play_ensure_config; play_config_path; exit ;;
-    --config-export) CONFIG_EXPORT=${2:?missing export path}; shift ;;
-    --config-import) CONFIG_IMPORT=${2:?missing import path}; shift ;;
+    --config-export) play_require_option_value "$1" 'an export path' "${2-}"; CONFIG_EXPORT=$2; shift ;;
+    --config-import) play_require_option_value "$1" 'an import path' "${2-}"; CONFIG_IMPORT=$2; shift ;;
     --install-bash-completion) play_install_bash_completion; exit ;;
-    --set) CONFIG_SET=${2:?missing KEY=VALUE}; shift ;;
-    --get) CONFIG_GET=${2:?missing KEY}; shift ;;
-    --doctor) play_load_config; play_doctor; exit ;;
+    --set) play_require_option_value "$1" 'KEY=VALUE' "${2-}"; CONFIG_SET=$2; shift ;;
+    --get) play_require_option_value "$1" 'KEY' "${2-}"; CONFIG_GET=$2; shift ;;
+    --doctor) DOCTOR=true ;;
     --help|-help) play_usage; exit ;;
     --) shift; POSITIONAL+=("$@"); break ;;
     -*) printf 'Unknown option: %s\n' "$1" >&2; play_usage >&2; exit 2 ;;
@@ -451,22 +556,45 @@ while (($#)); do
   shift
 done
 
-play_load_config
+if play_bool "$DEBUG_REQUESTED"; then
+  play_debug_init "$DEBUG_LOG_PATH_ARG"
+  play_debug_command 'argv' play "${PLAY_ORIGINAL_ARGS[@]}"
+  play_debug_log "cwd: $PWD"
+  play_debug_log "play root: $PLAY_ROOT"
+  play_debug_log "bash: ${BASH_VERSION:-unknown}"
+  play_debug_log "uname: $(uname -a 2>/dev/null || printf unknown)"
+  play_debug_log "config path: $(play_config_path)"
+  play_debug_log "state path: $(play_state_dir)"
+fi
 
 if [[ -n $CONFIG_EXPORT ]]; then play_export_config "$CONFIG_EXPORT"; exit; fi
 if [[ -n $CONFIG_IMPORT ]]; then play_import_config "$CONFIG_IMPORT"; exit; fi
 if [[ -n $CONFIG_SET ]]; then
-  [[ $CONFIG_SET == *=* ]] || { printf '%s\n' '--set requires KEY=VALUE' >&2; exit 2; }
+  [[ $CONFIG_SET == *=* ]] || { play_error '--set requires KEY=VALUE.'; play_hint "$(play_option_hint --set)"; exit 2; }
   play_set_config_value "${CONFIG_SET%%=*}" "${CONFIG_SET#*=}"
   exit
 fi
+if play_bool "$DOCTOR"; then
+  play_ensure_config
+  if play_validate_config_file "$(play_config_path)" >/dev/null 2>&1; then
+    # shellcheck source=/dev/null
+    source "$(play_config_path)"
+  fi
+  play_doctor
+  exit
+fi
+
+play_load_config
+play_debug_log 'Config loaded.'
+
 if [[ -n $CONFIG_GET ]]; then
-  eval "printf '%s\n' \"\${$CONFIG_GET:-}\""
+  play_get_config_value "$CONFIG_GET"
   exit
 fi
 
 if [[ -n $PLAYLIST_RESULTS_ARG && ! $PLAYLIST_RESULTS_ARG =~ ^[1-9][0-9]*$ ]]; then
-  printf '%s\n' '--playlist-results requires a positive integer.' >&2
+  play_error '--playlist-results requires a positive integer.'
+  play_hint "$(play_option_hint --playlist-results)"
   exit 2
 fi
 
@@ -483,6 +611,10 @@ NO_SUBTITLES_EFFECTIVE=${NO_SUBTITLES_EFFECTIVE:-${NO_SUBTITLES:-false}}
 SUBTITLE_LANGUAGE_EFFECTIVE=${SUBTITLE_LANGUAGE_EFFECTIVE:-${SUBTITLE_LANGUAGE:-en}}
 COOKIE_PATH_EFFECTIVE=${COOKIE_PATH_ARG:-${COOKIE_PATH:-}}
 COOKIE_BROWSER_EFFECTIVE=${COOKIE_BROWSER_ARG:-${COOKIE_BROWSER:-}}
+
+play_validate_effective_settings
+play_debug_log "mode: search=$SEARCH home=$HOME_FEED playlist=$PLAYLIST channel_playlists=$CHANNEL_PLAYLISTS first=$FIRST dry_run=$DRY_RUN select_only=$SELECT_ONLY copy_url=$COPY_URL open=$OPEN_URL"
+play_debug_log "effective: player=${PLAYER:-mpv} size=$SIZE_EFFECTIVE format=$YTDL_FORMAT_EFFECTIVE fps=${YTDL_MAX_FPS:-30} audio=$AUDIO_ONLY_EFFECTIVE background=$BACKGROUND_EFFECTIVE loop=$LOOP_EFFECTIVE hwdec=$HARDWARE_ACCEL_EFFECTIVE subtitles_disabled=$NO_SUBTITLES_EFFECTIVE slang=$SUBTITLE_LANGUAGE_EFFECTIVE"
 
 if [[ -n $COOKIE_PATH_ARG ]]; then
   if [[ ! -f $COOKIE_PATH_ARG ]]; then printf 'Cookie file not found: %s\n' "$COOKIE_PATH_ARG" >&2; exit 1; fi
@@ -508,6 +640,7 @@ fi
 if [[ -z ${URL:-} && ${#POSITIONAL[@]} -gt 0 ]]; then
   URL=${POSITIONAL[*]}
 fi
+play_debug_log "input URL/query: ${URL:-<empty>}"
 
 if [[ -z ${URL:-} && $HOME_FEED == false ]]; then
   play_usage
@@ -523,11 +656,11 @@ PLAY_HISTORY_TYPE=${PLAY_HISTORY_TYPE:-Direct}
 PLAY_HISTORY_TITLE=${PLAY_HISTORY_TITLE:-$URL}
 
 if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
-  play_has yt-dlp || { printf 'yt-dlp is required for search/home.\n' >&2; exit 1; }
   NORMALIZED_TYPE=
-  if [[ -n $TYPE ]]; then NORMALIZED_TYPE=$(play_normalize_type "$TYPE") || { printf 'Invalid type: %s\n' "$TYPE" >&2; exit 2; }; fi
+  if [[ -n $TYPE ]]; then NORMALIZED_TYPE=$(play_normalize_type "$TYPE") || play_invalid_value 'type' "$TYPE" 'video, playlist, or channel' 'Example: play -s "backlogs" --type channel'; fi
+  play_has yt-dlp || { printf 'yt-dlp is required for search/home.\n' >&2; exit 1; }
   if play_bool "$CHANNEL_PLAYLISTS"; then
-    if [[ -n $NORMALIZED_TYPE && $NORMALIZED_TYPE != Channel ]]; then printf '%s\n' '--channel-playlists requires channel search results.' >&2; exit 2; fi
+    if [[ -n $NORMALIZED_TYPE && $NORMALIZED_TYPE != Channel ]]; then play_error '--channel-playlists requires channel search results.'; play_hint 'Use --type channel or omit --type.'; exit 2; fi
     NORMALIZED_TYPE=Channel
   fi
   [[ $NORMALIZED_TYPE == Playlist ]] && PLAYLIST=true
@@ -577,6 +710,7 @@ if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
   play_unregister_cleanup_file "$tmp"
   rm -f "$tmp"
   play_apply_selected_rows "$selected" || exit 1
+  play_debug_log "selected: type=$PLAY_HISTORY_TYPE title=$PLAY_HISTORY_TITLE url=$PLAY_TARGET_URL"
   play_show_selected
   if play_bool "$CHANNEL_PLAYLISTS" && [[ $PLAY_HISTORY_TYPE != Channel ]]; then
     printf '%s\n' '--channel-playlists requires selecting a channel.' >&2
@@ -588,6 +722,7 @@ if play_bool "$SEARCH" || play_bool "$HOME_FEED"; then
       play_reverse_targets
       REVERSE_URLS=false
     fi
+    play_debug_log "selected channel playlist target: type=$PLAY_HISTORY_TYPE title=$PLAY_HISTORY_TITLE url=$PLAY_TARGET_URL count=${#PLAY_TARGET_URLS[@]}"
     play_show_selected
   fi
 else
@@ -599,6 +734,7 @@ else
       play_reverse_targets
       REVERSE_URLS=false
     fi
+    play_debug_log "selected channel playlist target: type=$PLAY_HISTORY_TYPE title=$PLAY_HISTORY_TITLE url=$PLAY_TARGET_URL count=${#PLAY_TARGET_URLS[@]}"
     play_show_selected
   else
     if ((${#POSITIONAL[@]} > 0)) && ! play_bool "$CLIPBOARD" && ! play_bool "$LAST" && ! play_bool "$HISTORY"; then
@@ -614,6 +750,7 @@ else
       if ! play_is_url "$target_url"; then printf 'Invalid URL. Use http:// or https://, or add --search.\n' >&2; exit 2; fi
     done
     PLAY_TARGET_URL=${PLAY_TARGET_URLS[0]}
+    play_debug_log "direct target: url=$PLAY_TARGET_URL count=${#PLAY_TARGET_URLS[@]}"
   fi
 fi
 
@@ -634,4 +771,6 @@ if play_bool "$OPEN_URL"; then play_has xdg-open || { printf 'xdg-open is requir
 
 play_build_mpv_args
 play_apply_command_overrides
+play_debug_log "target count: ${#PLAY_TARGET_URLS[@]}"
+play_debug_command 'player command' "$PLAY_PLAYER" "${PLAY_MPV_ARGS[@]}" "${PLAY_TARGET_URLS[@]}"
 play_launch

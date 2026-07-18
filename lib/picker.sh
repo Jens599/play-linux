@@ -52,7 +52,7 @@ EOF
       fi
     fi
     printf '  Keys: %s\n' "$keys" >&2
-    fzf_args=(--height 55% --layout reverse --border --expect="$expect_keys" --prompt 'play > ' --header "$header" --preview "$preview_cmd" --preview-window down,45%,border-top,wrap,hidden --bind ctrl-o:toggle-preview "${fzf_args[@]}")
+    fzf_args=(--height '55%' --layout reverse --border --expect="$expect_keys" --prompt 'play > ' --header "$header" --preview "$preview_cmd" --preview-window 'down,45%,border-top,wrap,hidden' --bind ctrl-o:toggle-preview "${fzf_args[@]}")
     if ! picked=$("$display_file" | fzf "${fzf_args[@]}"); then
       play_unregister_cleanup_file "$display_file"
       rm -f "$display_file"

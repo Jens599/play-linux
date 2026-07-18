@@ -81,8 +81,21 @@ play --clipboard
 play --history
 play --last
 play --dry-run --pass-thru 'https://example.test/video'
+play --debug-log ./play-debug.log -s 'backlogs' --type channel --format 720p
 play --doctor
 ```
+
+## Debug Logs
+
+Use `--debug` or `--debug-log PATH` when reporting a bug. The log includes the command line, platform details, config paths, effective playback settings, selected targets, launch commands, and suppressed `yt-dlp`/`mpv`/IPC stderr.
+
+```bash
+play --debug -s 'query'
+play --debug-log ./play-debug.log 'https://example.test/video'
+tests/debug-smoke.sh
+```
+
+`tests/debug-smoke.sh` uses a real YouTube URL/query with per-command timeouts and writes logs to `.tmp/debug-smoke/`. Override defaults with `TIMEOUT_SECONDS=90`, `REAL_URL=...`, or `SEARCH_QUERY=...`.
 
 ## Preserved Configuration
 

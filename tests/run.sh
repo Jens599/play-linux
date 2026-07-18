@@ -132,6 +132,26 @@ playlist_selected=$(PATH="$fake_bin:$PATH" MENU_PROVIDER=fzf "$ROOT/bin/play" 'h
 assert_contains "$playlist_selected" $'Playlist\tPlaylist Three\thttps://www.youtube.com/playlist?list=PL3'
 rm -rf "$fake_bin"
 
+fake_bin=$(mktemp -d)
+cat >"$fake_bin/yt-dlp" <<'EOF'
+#!/usr/bin/env bash
+printf 'Playlist One\tPL1\tYoutubeTab\thttps://www.youtube.com/playlist?list=PL1\tNA\tChannel\tUploader\tNA\tView full playlist\tNA\t2\tNA\n'
+EOF
+cat >"$fake_bin/fzf" <<'EOF'
+#!/usr/bin/env bash
+args=" $* "
+[[ $args == *'ctrl-o:execute-silent('* ]] || { printf 'missing ctrl-o playlist binding\n' >&2; exit 2; }
+[[ $args == *'ctrl-b:execute-silent('* ]] || { printf 'missing ctrl-b back binding\n' >&2; exit 2; }
+[[ $args == *'ctrl-r:execute-silent('* ]] || { printf 'missing ctrl-r reverse binding\n' >&2; exit 2; }
+[[ $args == *'alt-i:toggle-preview'* ]] || { printf 'missing alt-i info binding\n' >&2; exit 2; }
+IFS= read -r line || exit 1
+printf '\n%s\n' "$line"
+EOF
+chmod +x "$fake_bin/yt-dlp" "$fake_bin/fzf"
+picker_shortcuts=$(PATH="$fake_bin:$PATH" MENU_PROVIDER=fzf "$ROOT/bin/play" -s playlists --type playlist --select-only 2>/dev/null)
+assert_contains "$picker_shortcuts" $'Playlist\tPlaylist One\thttps://www.youtube.com/playlist?list=PL1'
+rm -rf "$fake_bin"
+
 completion_home=$(mktemp -d)
 printf 'if command -v zsh >/dev/null 2>&1; then\n  exec zsh -l\nfi\n' >"$completion_home/.bashrc"
 printf 'compinit\n' >"$completion_home/.zshrc"

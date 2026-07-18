@@ -71,8 +71,74 @@ play_ensure_config() {
   fi
 }
 
+play_config_key_valid() {
+  [[ $1 =~ ^[A-Z][A-Z0-9_]*$ ]]
+}
+
+play_config_value_has_unsafe_shell() {
+  local value=$1 char quote='' escaped=false i
+  for ((i = 0; i < ${#value}; i++)); do
+    char=${value:i:1}
+    if [[ $escaped == true ]]; then
+      escaped=false
+      continue
+    fi
+    if [[ $quote != "'" && $char == "\\" ]]; then
+      escaped=true
+      continue
+    fi
+    if [[ $quote != '"' && $char == "'" ]]; then
+      if [[ $quote == "'" ]]; then quote=; else quote="'"; fi
+      continue
+    fi
+    if [[ $quote != "'" && $char == '"' ]]; then
+      if [[ $quote == '"' ]]; then quote=; else quote='"'; fi
+      continue
+    fi
+    if [[ $quote == "'" ]]; then
+      continue
+    fi
+    if [[ $char == '$' || $char == '`' ]]; then
+      return 0
+    fi
+    if [[ -z $quote ]]; then
+      case "$char" in
+        ' '|$'\t'|';'|'&'|'|'|'<'|'>'|'('|')') return 0 ;;
+      esac
+    fi
+  done
+  [[ $escaped == true || -n $quote ]]
+}
+
+play_validate_config_file() {
+  local file=$1 line key value lineno=0
+  if ! bash -n "$file" >/dev/null 2>&1; then
+    printf 'Invalid config syntax: %s\n' "$file" >&2
+    return 1
+  fi
+  while IFS= read -r line || [[ -n $line ]]; do
+    lineno=$((lineno + 1))
+    [[ -z $line || $line == \#* ]] && continue
+    if [[ $line != *=* ]]; then
+      printf 'Unsafe config line %d: expected KEY=VALUE assignment.\n' "$lineno" >&2
+      return 1
+    fi
+    key=${line%%=*}
+    value=${line#*=}
+    if ! play_config_key_valid "$key"; then
+      printf 'Unsafe config line %d: invalid key %s.\n' "$lineno" "$key" >&2
+      return 1
+    fi
+    if play_config_value_has_unsafe_shell "$value"; then
+      printf 'Unsafe config line %d: value for %s contains executable shell syntax.\n' "$lineno" "$key" >&2
+      return 1
+    fi
+  done <"$file"
+}
+
 play_load_config() {
   play_ensure_config
+  play_validate_config_file "$(play_config_path)"
   # shellcheck source=/dev/null
   source "$(play_config_path)"
 }
@@ -96,24 +162,43 @@ play_import_config() {
     printf 'Config import file not found: %s\n' "$src" >&2
     return 1
   fi
+  play_validate_config_file "$src" || return 1
   mkdir -p "$(play_config_dir)"
   cp "$src" "$(play_config_path)"
   printf 'Imported config: %s\n' "$(play_config_path)"
 }
 
 play_set_config_value() {
-  local key=$1 value=$2 path
+  local key=$1 value=$2 path quoted tmp found=false line
   path=$(play_config_path)
   play_ensure_config
-  if ! [[ $key =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+  if ! play_config_key_valid "$key"; then
     printf 'Invalid config key: %s\n' "$key" >&2
     return 1
   fi
-  if grep -q "^${key}=" "$path"; then
-    sed -i "s|^${key}=.*|${key}=${value}|" "$path"
-  else
-    printf '%s=%s\n' "$key" "$value" >>"$path"
+  printf -v quoted '%q' "$value"
+  tmp=$(mktemp)
+  while IFS= read -r line || [[ -n $line ]]; do
+    if [[ $line == "$key="* ]]; then
+      printf '%s=%s\n' "$key" "$quoted" >>"$tmp"
+      found=true
+    else
+      printf '%s\n' "$line" >>"$tmp"
+    fi
+  done <"$path"
+  if [[ $found == false ]]; then
+    printf '%s=%s\n' "$key" "$quoted" >>"$tmp"
   fi
+  mv "$tmp" "$path"
+}
+
+play_get_config_value() {
+  local key=$1
+  if ! play_config_key_valid "$key"; then
+    printf 'Invalid config key: %s\n' "$key" >&2
+    return 1
+  fi
+  printf '%s\n' "${!key:-}"
 }
 
 play_bool() {

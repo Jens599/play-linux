@@ -62,7 +62,10 @@ play_search_lookup_count() {
     args=("$lookup_url" --flat-playlist --playlist-items 1- --print '%(id)s')
     [[ -n $cookie ]] && args+=(--cookies "$cookie")
     [[ -z $cookie && -n $browser ]] && args+=(--cookies-from-browser "$browser")
-    if ! count=$(yt-dlp "${args[@]}" 2>/dev/null | wc -l); then
+    play_debug_command 'yt-dlp playlist count' yt-dlp "${args[@]}"
+    if play_debug_enabled; then
+      count=$(yt-dlp "${args[@]}" 2>>"$PLAY_DEBUG_LOG_PATH" | wc -l) || return 1
+    elif ! count=$(yt-dlp "${args[@]}" 2>/dev/null | wc -l); then
       return 1
     fi
     [[ $count =~ ^[0-9]+$ && $count != 0 ]] || return 1
@@ -74,7 +77,10 @@ play_search_lookup_count() {
   [[ -n $cookie ]] && args+=(--cookies "$cookie")
   [[ -z $cookie && -n $browser ]] && args+=(--cookies-from-browser "$browser")
 
-  if ! count=$(yt-dlp "${args[@]}" 2>/dev/null | awk -F '\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/) { print $i; exit } }'); then
+  play_debug_command 'yt-dlp channel count' yt-dlp "${args[@]}"
+  if play_debug_enabled; then
+    count=$(yt-dlp "${args[@]}" 2>>"$PLAY_DEBUG_LOG_PATH" | awk -F '\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/) { print $i; exit } }') || return 1
+  elif ! count=$(yt-dlp "${args[@]}" 2>/dev/null | awk -F '\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/) { print $i; exit } }'); then
     return 1
   fi
   [[ -n $count ]] || return 1
@@ -87,7 +93,10 @@ play_search_lookup_source() {
   [[ -n $cookie ]] && args+=(--cookies "$cookie")
   [[ -z $cookie && -n $browser ]] && args+=(--cookies-from-browser "$browser")
 
-  if ! source=$(yt-dlp "${args[@]}" 2>/dev/null | awk -F '\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i != "" && $i != "NA") { print $i; exit } }'); then
+  play_debug_command 'yt-dlp source lookup' yt-dlp "${args[@]}"
+  if play_debug_enabled; then
+    source=$(yt-dlp "${args[@]}" 2>>"$PLAY_DEBUG_LOG_PATH" | awk -F '\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i != "" && $i != "NA") { print $i; exit } }') || return 1
+  elif ! source=$(yt-dlp "${args[@]}" 2>/dev/null | awk -F '\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i != "" && $i != "NA") { print $i; exit } }'); then
     return 1
   fi
   [[ -n $source ]] || return 1
@@ -111,6 +120,8 @@ play_search_youtube() {
   local args=("$search_url" --print $'%(title)s\t%(id)s\t%(ie_key)s\t%(webpage_url)s\t%(duration_string)s\t%(channel)s\t%(uploader)s\t%(creator)s\t%(playlist_uploader)s\t%(view_count)s\t%(playlist_count)s\t%(channel_video_count)s' --flat-playlist --playlist-items "$start:$max")
   [[ -n $cookie ]] && args+=(--cookies "$cookie")
   [[ -z $cookie && -n $browser ]] && args+=(--cookies-from-browser "$browser")
+  play_debug_log "search url: $search_url"
+  play_debug_command 'yt-dlp search' yt-dlp "${args[@]}"
 
   while IFS= read -r row; do
     IFS=$'\t' read -r title id ie url duration channel uploader creator playlist_uploader views playlist_count channel_video_count <<<"$row"
@@ -128,7 +139,7 @@ play_search_youtube() {
     fi
     count_label=$(play_search_count_label "$result_type" "$playlist_count" "$channel_video_count")
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$result_type" "$title" "$url" "$duration" "$source" "$views" "$count_label"
-  done < <(yt-dlp "${args[@]}" 2>/dev/null)
+  done < <(if play_debug_enabled; then yt-dlp "${args[@]}" 2>>"$PLAY_DEBUG_LOG_PATH"; else yt-dlp "${args[@]}" 2>/dev/null; fi)
 }
 
 play_search_channel_playlists() {
@@ -137,6 +148,8 @@ play_search_channel_playlists() {
   args=("$playlists_url" --print $'%(title)s\t%(id)s\t%(ie_key)s\t%(webpage_url)s\t%(duration_string)s\t%(channel)s\t%(uploader)s\t%(creator)s\t%(playlist_uploader)s\t%(view_count)s\t%(playlist_count)s\t%(channel_video_count)s' --flat-playlist --playlist-items "$start:$max")
   [[ -n $cookie ]] && args+=(--cookies "$cookie")
   [[ -z $cookie && -n $browser ]] && args+=(--cookies-from-browser "$browser")
+  play_debug_log "channel playlists url: $playlists_url"
+  play_debug_command 'yt-dlp channel playlists' yt-dlp "${args[@]}"
 
   while IFS= read -r row; do
     IFS=$'\t' read -r title id ie url duration channel uploader creator playlist_uploader views playlist_count channel_video_count <<<"$row"
@@ -145,5 +158,5 @@ play_search_channel_playlists() {
     [[ -z $playlist_count || $playlist_count == NA ]] && playlist_count=$(play_search_lookup_count "$url" Playlist "$cookie" "$browser" || printf 'NA')
     count_label=$(play_search_count_label Playlist "$playlist_count" NA)
     printf 'Playlist\t%s\t%s\t%s\t%s\t%s\t%s\n' "$title" "$url" "$duration" "$item_source" "$views" "$count_label"
-  done < <(yt-dlp "${args[@]}" 2>/dev/null)
+  done < <(if play_debug_enabled; then yt-dlp "${args[@]}" 2>>"$PLAY_DEBUG_LOG_PATH"; else yt-dlp "${args[@]}" 2>/dev/null; fi)
 }

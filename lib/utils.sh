@@ -53,6 +53,41 @@ play_log_command() {
   printf '  %s\n' "$(play_color 33 "$command_text")"
 }
 
+play_debug_enabled() {
+  play_bool "${PLAY_DEBUG:-false}" && [[ -n ${PLAY_DEBUG_LOG_PATH:-} ]]
+}
+
+play_debug_log() {
+  play_debug_enabled || return 0
+  local message=$1 timestamp
+  timestamp=$(date -Is 2>/dev/null || date)
+  printf '[%s] %s\n' "$timestamp" "$message" >>"$PLAY_DEBUG_LOG_PATH"
+}
+
+play_debug_command() {
+  play_debug_enabled || return 0
+  local label=$1
+  shift
+  play_debug_log "$label: $(play_join_command "$@")"
+}
+
+play_debug_init() {
+  local requested_path=${1:-} path
+  if [[ -n $requested_path ]]; then
+    path=$requested_path
+  else
+    mkdir -p "$(play_state_dir)"
+    path="$(play_state_dir)/debug-$(date +%Y%m%d-%H%M%S)-$$.log"
+  fi
+  mkdir -p "$(dirname "$path")"
+  : >"$path"
+  PLAY_DEBUG=true
+  PLAY_DEBUG_LOG_PATH=$path
+  play_debug_log 'Debug logging enabled.'
+  play_debug_log "Log path: $PLAY_DEBUG_LOG_PATH"
+  printf 'Debug log: %s\n' "$PLAY_DEBUG_LOG_PATH" >&2
+}
+
 play_register_cleanup_file() {
   PLAY_CLEANUP_FILES+=("$1")
 }
@@ -109,7 +144,7 @@ play_json_string() {
 }
 
 play_join_command() {
-  local out= arg
+  local out='' arg
   for arg in "$@"; do
     printf -v arg '%q' "$arg"
     out+="${out:+ }$arg"

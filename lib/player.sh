@@ -3,6 +3,7 @@
 play_launch() {
   local command_text
   command_text=$(play_join_command "$PLAY_PLAYER" "${PLAY_MPV_ARGS[@]}" "${PLAY_TARGET_URLS[@]}")
+  play_debug_log "launch command: $command_text"
 
   if play_bool "${DRY_RUN:-false}"; then
     play_log_command "$command_text"
@@ -49,7 +50,11 @@ play_launch() {
 
   play_log warn 'IPC startup unavailable; launching player directly.'
   if play_bool "${BACKGROUND_EFFECTIVE:-false}"; then
-    nohup "$PLAY_PLAYER" "${PLAY_MPV_ARGS[@]}" "${PLAY_TARGET_URLS[@]}" >/dev/null 2>&1 &
+    if play_debug_enabled; then
+      nohup "$PLAY_PLAYER" "${PLAY_MPV_ARGS[@]}" "${PLAY_TARGET_URLS[@]}" >>"$PLAY_DEBUG_LOG_PATH" 2>&1 &
+    else
+      nohup "$PLAY_PLAYER" "${PLAY_MPV_ARGS[@]}" "${PLAY_TARGET_URLS[@]}" >/dev/null 2>&1 &
+    fi
     play_log ok 'Player started in background.'
   else
     "$PLAY_PLAYER" "${PLAY_MPV_ARGS[@]}" "${PLAY_TARGET_URLS[@]}"
@@ -80,7 +85,12 @@ play_send_mpv_loadfile() {
   else
     payload='{"command":["loadfile",'"$url_json"',"'"$mode"'"]}'
   fi
-  printf '%s\n' "$payload" | socat - "UNIX-CONNECT:$socket" >/dev/null 2>&1
+  play_debug_log "mpv IPC loadfile payload: $payload"
+  if play_debug_enabled; then
+    printf '%s\n' "$payload" | socat - "UNIX-CONNECT:$socket" >>"$PLAY_DEBUG_LOG_PATH" 2>&1
+  else
+    printf '%s\n' "$payload" | socat - "UNIX-CONNECT:$socket" >/dev/null 2>&1
+  fi
 }
 
 play_write_mpv_playlist() {
@@ -98,7 +108,12 @@ play_send_mpv_loadlist() {
   local socket=$1 playlist_file=$2 file_json payload
   file_json=$(play_json_string "$playlist_file")
   payload='{"command":["loadlist",'"$file_json"',"replace"]}'
-  printf '%s\n' "$payload" | socat - "UNIX-CONNECT:$socket" >/dev/null 2>&1
+  play_debug_log "mpv IPC loadlist payload: $payload"
+  if play_debug_enabled; then
+    printf '%s\n' "$payload" | socat - "UNIX-CONNECT:$socket" >>"$PLAY_DEBUG_LOG_PATH" 2>&1
+  else
+    printf '%s\n' "$payload" | socat - "UNIX-CONNECT:$socket" >/dev/null 2>&1
+  fi
 }
 
 play_start_mpv_ipc() {
@@ -112,8 +127,13 @@ play_start_mpv_ipc() {
 
   local startup_args=("${PLAY_MPV_ARGS[@]}" --force-window=immediate --idle=once --terminal=no "--input-ipc-server=$socket")
   play_log step 'Opening mpv window.'
+  play_debug_command 'mpv IPC startup' "$PLAY_PLAYER" "${startup_args[@]}"
 
-  nohup "$PLAY_PLAYER" "${startup_args[@]}" >/dev/null 2>&1 &
+  if play_debug_enabled; then
+    nohup "$PLAY_PLAYER" "${startup_args[@]}" >>"$PLAY_DEBUG_LOG_PATH" 2>&1 &
+  else
+    nohup "$PLAY_PLAYER" "${startup_args[@]}" >/dev/null 2>&1 &
+  fi
   process_pid=$!
   play_register_cleanup_pid "$process_pid"
   play_register_cleanup_file "$socket"

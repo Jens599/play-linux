@@ -142,6 +142,118 @@ play_search_youtube() {
   done < <(if play_debug_enabled; then yt-dlp "${args[@]}" 2>>"$PLAY_DEBUG_LOG_PATH"; else yt-dlp "${args[@]}" 2>/dev/null; fi)
 }
 
+play_cache_key() {
+  local input=$1 hash rest
+  if play_has sha256sum; then
+    read -r hash rest < <(printf '%s' "$input" | sha256sum)
+    printf '%s\n' "$hash"
+  else
+    hash=$(printf '%s' "$input" | cksum)
+    printf '%s\n' "${hash// /_}"
+  fi
+}
+
+play_cached_resolve_channel_from() {
+  local from=$1 cookie=$2 browser=${3:-} refresh=${4:-false} no_cache=${5:-false} ttl=${6:-604800}
+  local cache_dir cache_file now cached_at cached_url cached_source row key
+  if [[ $from == http://* || $from == https://* ]]; then
+    play_resolve_channel_from "$from" "$cookie" "$browser"
+    return
+  fi
+
+  key=$(play_cache_key "channel:${from,,}")
+  cache_dir=$(play_cache_dir)/channels
+  cache_file=$cache_dir/$key.tsv
+  now=$(date +%s)
+
+  if ! play_bool "$no_cache" && ! play_bool "$refresh" && [[ -r $cache_file ]]; then
+    IFS=$'\t' read -r cached_at cached_url cached_source <"$cache_file" || true
+    if [[ $cached_at =~ ^[0-9]+$ && -n $cached_url && -n $cached_source ]] && ((now - cached_at <= ttl)); then
+      printf '%s\t%s\n' "$cached_url" "$cached_source"
+      return
+    fi
+  fi
+
+  row=$(play_resolve_channel_from "$from" "$cookie" "$browser") || return
+  if ! play_bool "$no_cache"; then
+    mkdir -p "$cache_dir"
+    printf '%s\t%s\n' "$now" "$row" >"$cache_file"
+  fi
+  printf '%s\n' "$row"
+}
+
+play_read_cached_channel_resolution() {
+  local from=$1 ttl=${2:-604800} key cache_file now cached_at cached_url cached_source
+  [[ -n $from && $from != http://* && $from != https://* ]] || return 1
+  key=$(play_cache_key "channel:${from,,}")
+  cache_file=$(play_cache_dir)/channels/$key.tsv
+  [[ -r $cache_file ]] || return 1
+  now=$(date +%s)
+  IFS=$'\t' read -r cached_at cached_url cached_source <"$cache_file" || return 1
+  if [[ $cached_at =~ ^[0-9]+$ && -n $cached_url && -n $cached_source ]] && ((now - cached_at <= ttl)); then
+    printf '%s\t%s\n' "$cached_url" "$cached_source"
+    return
+  fi
+  return 1
+}
+
+play_cache_channel_resolution() {
+  local from=$1 channel_url=$2 channel_source=$3 no_cache=${4:-false} key cache_dir cache_file now
+  [[ -n $from && -n $channel_url && -n $channel_source ]] || return 0
+  [[ $from == http://* || $from == https://* ]] && return 0
+  play_bool "$no_cache" && return 0
+
+  key=$(play_cache_key "channel:${from,,}")
+  cache_dir=$(play_cache_dir)/channels
+  cache_file=$cache_dir/$key.tsv
+  now=$(date +%s)
+  mkdir -p "$cache_dir"
+  printf '%s\t%s\t%s\n' "$now" "$channel_url" "$channel_source" >"$cache_file"
+}
+
+play_resolve_channel_from() {
+  local from=$1 cookie=$2 browser=${3:-} row type title url duration source views count from_lower source_lower title_lower
+  if [[ $from == http://* || $from == https://* ]]; then
+    printf '%s\t%s\n' "$from" "$from"
+    return
+  fi
+
+  from_lower=${from,,}
+  while IFS= read -r row; do
+    IFS=$'\t' read -r type title url duration source views count <<<"$row"
+    [[ $type == Channel && -n $url && $url != NA ]] || continue
+    title_lower=${title,,}
+    source_lower=${source,,}
+    if [[ $title_lower == "$from_lower" || $source_lower == "$from_lower" ]]; then
+      printf '%s\t%s\n' "$url" "${source:-$title}"
+      return
+    fi
+    if [[ $title_lower == *"$from_lower"* || $source_lower == *"$from_lower"* ]]; then
+      printf '%s\t%s\n' "$url" "${source:-$title}"
+      return
+    fi
+  done < <(play_search_youtube "$from" false false 10 "$cookie" Channel "$browser")
+  return 1
+}
+
+play_search_from_channel() {
+  local query=$1 channel_source=$2 max=$3 cookie=$4 browser=${5:-} start=${6:-1} row type title url duration source views count source_lower channel_lower search_query
+  channel_lower=${channel_source,,}
+  if [[ -n $query ]]; then
+    search_query="$channel_source $query"
+  else
+    search_query=$channel_source
+  fi
+
+  while IFS= read -r row; do
+    [[ -z $row ]] && continue
+    IFS=$'\t' read -r type title url duration source views count <<<"$row"
+    source_lower=${source,,}
+    [[ $type == Video && $source_lower == "$channel_lower" ]] || continue
+    printf '%s\n' "$row"
+  done < <(play_search_youtube "$search_query" false false "$max" "$cookie" Video "$browser" "$start")
+}
+
 play_search_channel_playlists() {
   local channel_url=$1 max=$2 cookie=$3 browser=${4:-} source=${5:-} start=${6:-1} playlists_url row title id ie url duration channel uploader creator playlist_uploader views playlist_count channel_video_count item_source count_label args
   playlists_url=${channel_url%/}/playlists

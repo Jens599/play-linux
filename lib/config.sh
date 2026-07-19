@@ -12,6 +12,10 @@ play_state_dir() {
   printf '%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}/play"
 }
 
+play_cache_dir() {
+  printf '%s\n' "${XDG_CACHE_HOME:-$HOME/.cache}/play"
+}
+
 play_history_path() {
   printf '%s\n' "$(play_state_dir)/history.tsv"
 }
@@ -28,6 +32,7 @@ COOKIE_BROWSER=
 SIZE=pip
 YTDL_FORMAT=480p
 MAX_RESULTS=10
+CHANNEL_CACHE_TTL=604800
 PLAY_COLOR=auto
 
 AUDIO_ONLY=false

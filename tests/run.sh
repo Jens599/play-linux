@@ -4,8 +4,9 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 XDG_CONFIG_HOME=$(mktemp -d)
 XDG_STATE_HOME=$(mktemp -d)
-export XDG_CONFIG_HOME XDG_STATE_HOME
-trap 'rm -rf "$XDG_CONFIG_HOME" "$XDG_STATE_HOME"' EXIT
+XDG_CACHE_HOME=$(mktemp -d)
+export XDG_CONFIG_HOME XDG_STATE_HOME XDG_CACHE_HOME
+trap 'rm -rf "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"' EXIT
 
 assert_contains() {
   local haystack=$1 needle=$2
@@ -14,6 +15,11 @@ assert_contains() {
 
 config_path=$("$ROOT/bin/play" --config-path)
 [[ -f $config_path ]] || { printf 'Config was not created.\n' >&2; exit 1; }
+
+help_output=$("$ROOT/bin/play" --help)
+assert_contains "$help_output" "--from/-fr searches videos only"
+assert_contains "$help_output" "--refresh and --no-cache currently affect --from/-fr channel resolution."
+assert_contains "$help_output" "play -s 'terraria' --from 'CarlPlayin42' -f 720p"
 
 "$ROOT/bin/play" --set YTDL_FORMAT=720p
 value=$("$ROOT/bin/play" --get YTDL_FORMAT)
@@ -73,6 +79,24 @@ assert_contains "$escaped_selected" $'Direct\thttps://example.test/watch\\?v=abc
 invalid_playlist_results=$( "$ROOT/bin/play" 'https://example.test/video' --playlist-results nope --select-only 2>&1 ) && { printf 'Expected invalid --playlist-results to fail.\n' >&2; exit 1; }
 assert_contains "$invalid_playlist_results" '--playlist-results requires a positive integer.'
 
+unused_playlist_results=$( "$ROOT/bin/play" 'https://example.test/video' --playlist-results 3 --select-only 2>&1 ) && { printf 'Expected --playlist-results without --channel-playlists to fail.\n' >&2; exit 1; }
+assert_contains "$unused_playlist_results" '--playlist-results requires --channel-playlists.'
+
+pass_thru_without_dry_run=$( "$ROOT/bin/play" 'https://example.test/video' --pass-thru 2>&1 ) && { printf 'Expected --pass-thru without --dry-run to fail.\n' >&2; exit 1; }
+assert_contains "$pass_thru_without_dry_run" '--pass-thru requires --dry-run.'
+
+conflicting_actions=$( "$ROOT/bin/play" 'https://example.test/video' --select-only --copy-url 2>&1 ) && { printf 'Expected conflicting action flags to fail.\n' >&2; exit 1; }
+assert_contains "$conflicting_actions" 'Choose only one action'
+
+cache_flag_conflict=$( "$ROOT/bin/play" 'https://example.test/video' --refresh --no-cache --select-only 2>&1 ) && { printf 'Expected --refresh with --no-cache to fail.\n' >&2; exit 1; }
+assert_contains "$cache_flag_conflict" '--refresh cannot be combined with --no-cache.'
+
+search_home_conflict=$( "$ROOT/bin/play" -s query --home --select-only 2>&1 ) && { printf 'Expected --search with --home to fail.\n' >&2; exit 1; }
+assert_contains "$search_home_conflict" '--search cannot be combined with --home.'
+
+playlist_type_conflict=$( "$ROOT/bin/play" -s query --playlist --type video --select-only 2>&1 ) && { printf 'Expected --playlist with --type video to fail.\n' >&2; exit 1; }
+assert_contains "$playlist_type_conflict" '--playlist cannot be combined with --type video or --type channel.'
+
 missing_format=$( "$ROOT/bin/play" -s 'backlogs' -t channel -f 2>&1 ) && { printf 'Expected missing --format to fail.\n' >&2; exit 1; }
 assert_contains "$missing_format" 'Error: -f requires a format such as 480p, 720p, 1080p, best, or audio.'
 assert_contains "$missing_format" 'Hint: Example: play -s "backlogs" -t channel --format 720p'
@@ -130,6 +154,9 @@ EOF
 chmod +x "$fake_bin/yt-dlp" "$fake_bin/fzf"
 playlist_selected=$(PATH="$fake_bin:$PATH" MENU_PROVIDER=fzf "$ROOT/bin/play" 'https://www.youtube.com/channel/example' --channel-playlists --playlist-results 3 --select-only 2>/dev/null)
 assert_contains "$playlist_selected" $'Playlist\tPlaylist Three\thttps://www.youtube.com/playlist?list=PL3'
+playlist_dry=$(PATH="$fake_bin:$PATH" MENU_PROVIDER=fzf "$ROOT/bin/play" 'https://www.youtube.com/channel/example' --channel-playlists --playlist-results 3 -f 720p --dry-run --pass-thru 2>/dev/null)
+assert_contains "$playlist_dry" '--ytdl-format=bestvideo\[height\<=720\]'
+assert_contains "$playlist_dry" 'https://www.youtube.com/playlist\?list=PL3'
 rm -rf "$fake_bin"
 
 fake_bin=$(mktemp -d)
@@ -152,6 +179,65 @@ picker_shortcuts=$(PATH="$fake_bin:$PATH" MENU_PROVIDER=fzf "$ROOT/bin/play" -s 
 assert_contains "$picker_shortcuts" $'Playlist\tPlaylist One\thttps://www.youtube.com/playlist?list=PL1'
 rm -rf "$fake_bin"
 
+fake_bin=$(mktemp -d)
+cat >"$fake_bin/yt-dlp" <<'EOF'
+#!/usr/bin/env bash
+args=" $* "
+if [[ $args == *'/playlists '* ]]; then
+  printf 'Cached Playlist\tPL9\tYoutubeTab\thttps://www.youtube.com/playlist?list=PL9\tNA\tCache Channel\tCache Channel\tNA\tView full playlist\tNA\t9\tNA\n'
+else
+  [[ ${FAIL_CHANNEL_SEARCH:-false} != true ]] || { printf 'channel lookup disabled\n' >&2; exit 3; }
+  [[ $args == *'sp=EgIQAg%3D%3D'* ]] || { printf 'expected channel search\n' >&2; exit 2; }
+  printf 'Cache Channel\tUC999\tYoutubeTab\thttps://www.youtube.com/@cachechannel\tNA\tCache Channel\tCache Channel\tNA\tNA\tNA\tNA\t9\n'
+fi
+EOF
+cat >"$fake_bin/fzf" <<'EOF'
+#!/usr/bin/env bash
+IFS= read -r line || exit 1
+printf '\n%s\n' "$line"
+EOF
+chmod +x "$fake_bin/yt-dlp" "$fake_bin/fzf"
+channel_playlist_cached_first=$(PATH="$fake_bin:$PATH" MENU_PROVIDER=fzf "$ROOT/bin/play" -s 'Cache Channel' --channel-playlists --playlist-results 9 --select-only 2>/dev/null)
+assert_contains "$channel_playlist_cached_first" $'Playlist\tCached Playlist\thttps://www.youtube.com/playlist?list=PL9'
+channel_playlist_cached_second=$(FAIL_CHANNEL_SEARCH=true PATH="$fake_bin:$PATH" MENU_PROVIDER=fzf "$ROOT/bin/play" -s 'Cache Channel' --channel-playlists --playlist-results 9 --select-only 2>/dev/null)
+assert_contains "$channel_playlist_cached_second" $'Playlist\tCached Playlist\thttps://www.youtube.com/playlist?list=PL9'
+channel_playlist_refresh=$(FAIL_CHANNEL_SEARCH=true PATH="$fake_bin:$PATH" MENU_PROVIDER=fzf "$ROOT/bin/play" -s 'Cache Channel' --channel-playlists --playlist-results 9 --refresh --select-only 2>&1) && { printf 'Expected --refresh to bypass cached channel playlist lookup.\n' >&2; exit 1; }
+assert_contains "$channel_playlist_refresh" 'No results found.'
+rm -rf "$fake_bin"
+
+fake_bin=$(mktemp -d)
+cat >"$fake_bin/yt-dlp" <<'EOF'
+#!/usr/bin/env bash
+args=" $* "
+if [[ $args == *'search_query=Linux%20Channel%20install'* || $args == *'search_query=Linux+Channel+install'* ]]; then
+  printf 'Install tour\tVID1\tYoutube\thttps://www.youtube.com/watch?v=VID1\t12:00\tLinux Channel\tLinux Channel\tNA\tNA\t100\tNA\tNA\n'
+  printf 'Install tour\tVID2\tYoutube\thttps://www.youtube.com/watch?v=VID2\t08:00\tOther Channel\tOther Channel\tNA\tNA\t200\tNA\tNA\n'
+else
+  [[ ${FAIL_CHANNEL_SEARCH:-false} != true ]] || { printf 'channel lookup disabled\n' >&2; exit 3; }
+  [[ $args == *'sp=EgIQAg%3D%3D'* ]] || { printf 'expected channel search\n' >&2; exit 2; }
+  printf 'Linux Channel\tUC123\tYoutubeTab\thttps://www.youtube.com/@linuxchannel\tNA\tLinux Channel\tLinux Channel\tNA\tNA\tNA\tNA\t42\n'
+fi
+EOF
+chmod +x "$fake_bin/yt-dlp"
+from_selected=$(PATH="$fake_bin:$PATH" "$ROOT/bin/play" -s install -fr 'Linux Channel' --first --select-only 2>/dev/null)
+assert_contains "$from_selected" $'Video\tInstall tour\thttps://www.youtube.com/watch?v=VID1'
+[[ $from_selected != *'VID2'* ]] || { printf 'Expected --from query to filter other channels.\n' >&2; exit 1; }
+from_cached=$(FAIL_CHANNEL_SEARCH=true PATH="$fake_bin:$PATH" "$ROOT/bin/play" -s install -fr 'Linux Channel' --first --select-only 2>/dev/null)
+assert_contains "$from_cached" $'Video\tInstall tour\thttps://www.youtube.com/watch?v=VID1'
+from_refresh=$(FAIL_CHANNEL_SEARCH=true PATH="$fake_bin:$PATH" "$ROOT/bin/play" -s install -fr 'Linux Channel' --refresh --first --select-only 2>&1) && { printf 'Expected --refresh to bypass cached channel lookup.\n' >&2; exit 1; }
+assert_contains "$from_refresh" 'Channel not found: Linux Channel'
+from_no_cache=$(FAIL_CHANNEL_SEARCH=true PATH="$fake_bin:$PATH" "$ROOT/bin/play" -s install -fr 'Linux Channel' --no-cache --first --select-only 2>&1) && { printf 'Expected --no-cache to bypass cached channel lookup.\n' >&2; exit 1; }
+assert_contains "$from_no_cache" 'Channel not found: Linux Channel'
+from_without_search=$(PATH="$fake_bin:$PATH" "$ROOT/bin/play" install --from 'Linux Channel' --first --select-only 2>/dev/null)
+assert_contains "$from_without_search" $'Video\tInstall tour\thttps://www.youtube.com/watch?v=VID1'
+from_playlist_conflict=$(PATH="$fake_bin:$PATH" "$ROOT/bin/play" -s install -p -fr 'Linux Channel' --first --select-only 2>&1) && { printf 'Expected --from with --playlist to fail.\n' >&2; exit 1; }
+assert_contains "$from_playlist_conflict" '--from searches channel videos only.'
+from_type_conflict=$(PATH="$fake_bin:$PATH" "$ROOT/bin/play" -s install -fr 'Linux Channel' --type channel --first --select-only 2>&1) && { printf 'Expected --from with --type channel to fail.\n' >&2; exit 1; }
+assert_contains "$from_type_conflict" '--from searches channel videos only.'
+from_channel_playlists_conflict=$(PATH="$fake_bin:$PATH" "$ROOT/bin/play" -s install -fr 'Linux Channel' --channel-playlists --first --select-only 2>&1) && { printf 'Expected --from with --channel-playlists to fail.\n' >&2; exit 1; }
+assert_contains "$from_channel_playlists_conflict" '--from searches channel videos only.'
+rm -rf "$fake_bin"
+
 completion_home=$(mktemp -d)
 printf 'if command -v zsh >/dev/null 2>&1; then\n  exec zsh -l\nfi\n' >"$completion_home/.bashrc"
 printf 'compinit\n' >"$completion_home/.zshrc"
@@ -163,6 +249,10 @@ completion_bashrc=$(<"$completion_home/.bashrc")
 completion_zshrc=$(<"$completion_home/.zshrc")
 assert_contains "$completion_script" 'complete -F _play_complete play'
 assert_contains "$completion_script" '--debug-log'
+assert_contains "$completion_script" '--from'
+assert_contains "$completion_script" '-fr'
+assert_contains "$completion_script" '--refresh'
+assert_contains "$completion_script" '--no-cache'
 assert_contains "$completion_bashrc" '# >>> play bash completion >>>'
 assert_contains "$completion_zshrc" '# >>> play zsh completion >>>'
 assert_contains "$completion_zshrc" 'bashcompinit'
